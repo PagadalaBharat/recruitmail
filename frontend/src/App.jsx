@@ -1,12 +1,95 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import axios from 'axios'
 import './App.css'
+
+// ─── EU/EEA Country → Nationality mapping ────────────────────────────────────
+const EU_MAP = {
+  austria: 'Austrian', belgium: 'Belgian', bulgaria: 'Bulgarian',
+  croatia: 'Croatian', cyprus: 'Cypriot', 'czech republic': 'Czech',
+  czechia: 'Czech', denmark: 'Danish', estonia: 'Estonian',
+  finland: 'Finnish', france: 'French', germany: 'German',
+  greece: 'Greek', hungary: 'Hungarian', ireland: 'Irish',
+  italy: 'Italian', latvia: 'Latvian', lithuania: 'Lithuanian',
+  luxembourg: 'Luxembourgish', malta: 'Maltese', netherlands: 'Dutch',
+  holland: 'Dutch', poland: 'Polish', portugal: 'Portuguese',
+  romania: 'Romanian', slovakia: 'Slovak', slovenia: 'Slovenian',
+  spain: 'Spanish', sweden: 'Swedish', 'united kingdom': 'British',
+  uk: 'British', norway: 'Norwegian', iceland: 'Icelandic',
+  switzerland: 'Swiss', liechtenstein: 'Liechtensteiner',
+  austrian: 'Austrian', belgian: 'Belgian', bulgarian: 'Bulgarian',
+  croatian: 'Croatian', cypriot: 'Cypriot', czech: 'Czech',
+  danish: 'Danish', estonian: 'Estonian', finnish: 'Finnish',
+  french: 'French', german: 'German', greek: 'Greek',
+  hungarian: 'Hungarian', irish: 'Irish', italian: 'Italian',
+  latvian: 'Latvian', lithuanian: 'Lithuanian', luxembourgish: 'Luxembourgish',
+  maltese: 'Maltese', dutch: 'Dutch', polish: 'Polish',
+  portuguese: 'Portuguese', romanian: 'Romanian', slovak: 'Slovak',
+  slovenian: 'Slovenian', spanish: 'Spanish', swedish: 'Swedish',
+  british: 'British', norwegian: 'Norwegian', icelandic: 'Icelandic',
+  swiss: 'Swiss',
+}
+
+const NATIONALITY_SUGGESTIONS = [
+  'Austrian', 'Belgian', 'Bulgarian', 'Croatian', 'Cypriot', 'Czech',
+  'Danish', 'Dutch', 'Estonian', 'Finnish', 'French', 'German',
+  'Greek', 'Hungarian', 'Icelandic', 'Irish', 'Italian', 'Latvian',
+  'Liechtensteiner', 'Lithuanian', 'Luxembourgish', 'Maltese', 'Norwegian',
+  'Polish', 'Portuguese', 'Romanian', 'Slovak', 'Slovenian', 'Spanish',
+  'Swedish', 'Swiss', 'British',
+  'Indian', 'Pakistani', 'Bangladeshi', 'Sri Lankan', 'Nepali',
+  'American', 'Canadian', 'Australian', 'Chinese', 'Filipino',
+  'Nigerian', 'Kenyan', 'South African', 'Brazilian', 'Mexican',
+  'Turkish', 'Egyptian', 'Moroccan', 'Algerian', 'Ukrainian',
+  'Russian', 'Belarusian', 'Georgian', 'Armenian', 'Azerbaijani',
+  'Thai', 'Vietnamese', 'Indonesian', 'Malaysian', 'Singaporean',
+  'Japanese', 'Korean',
+]
+
+const EU_NATIONALITIES = new Set([
+  'Austrian','Belgian','Bulgarian','Croatian','Cypriot','Czech','Danish','Dutch',
+  'Estonian','Finnish','French','German','Greek','Hungarian','Icelandic','Irish',
+  'Italian','Latvian','Lithuanian','Luxembourgish','Maltese','Norwegian','Polish',
+  'Portuguese','Romanian','Slovak','Slovenian','Spanish','Swedish','Swiss','British',
+  'Liechtensteiner',
+])
+
+function isEUNationality(nat) {
+  if (!nat || !nat.trim()) return null
+  for (const eu of EU_NATIONALITIES) {
+    if (eu.toLowerCase() === nat.trim().toLowerCase()) return true
+  }
+  return false
+}
+
+function resolveNationality(input) {
+  if (!input) return input
+  const key = input.trim().toLowerCase()
+  return EU_MAP[key] || input
+}
+
+// ─── Candidate Info builder — EU vs Non-EU ───────────────────────────────────
+function buildCandidateInfo(name, isEU, workAuth) {
+  const n = name || '[Candidate Name]'
+  if (isEU === false && workAuth) {
+    // Non-EU with work auth: insert work permit line
+    return `${n} is actively looking for new opportunities, as his recent project ended in Feb 2026.
+Has no interviews/offers in the pipeline.
+No planned vacations & his communication skills are good.
+${workAuth} and his wife is working for Prodware as permanent employee on a sponsored visa.
+Has own Limited company to manage payroll in Sweden.`
+  }
+  // EU or unknown: standard 4 bullets
+  return `${n} is actively looking for new opportunities, as his recent project ended in Feb 2026.
+Has no interviews/offers in the pipeline.
+No planned vacations & his communication skills are good.
+Has own Limited company to manage payroll in Sweden.`
+}
 
 // ─── Date helper ──────────────────────────────────────────────────────────────
 const todayFormatted = () =>
   new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 
-// ─── PII strip (before sending to Groq) ──────────────────────────────────────
+// ─── PII helpers ──────────────────────────────────────────────────────────────
 function stripPII(text) {
   return text
     .replace(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g, '[EMAIL REDACTED]')
@@ -15,7 +98,6 @@ function stripPII(text) {
     .replace(/\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/g, '[DOB REDACTED]')
 }
 
-// ─── PII extract (local only, never sent to Groq) ────────────────────────────
 function extractPII(text) {
   const emailMatch = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/)
   const phoneMatch = text.match(/(\+[\d\s\-().]{7,}\d|\b0\d[\d\s\-]{7,}\d)/)
@@ -38,7 +120,6 @@ function extractPII(text) {
   }
 }
 
-// ─── PDF parser (browser, pdf.js CDN) ────────────────────────────────────────
 async function parsePDF(file) {
   const pdfjsLib = window['pdfjs-dist/build/pdf']
   if (!pdfjsLib) throw new Error('PDF.js not loaded')
@@ -55,23 +136,14 @@ async function parsePDF(file) {
   return fullText
 }
 
-// ─── DOCX parser (browser, mammoth CDN) ──────────────────────────────────────
 async function parseDOCX(file) {
   const mammoth = window.mammoth
-  if (!mammoth) throw new Error('Mammoth not loaded')
+  if (!mammoth) throw new Error('Mammoth.js not loaded')
   const arrayBuffer = await file.arrayBuffer()
   const result = await mammoth.extractRawText({ arrayBuffer })
   return result.value
 }
 
-// ─── Candidate info builder ───────────────────────────────────────────────────
-const buildCandidateInfo = (name) =>
-  `${name || '[Candidate Name]'} is actively looking for new opportunities, as his recent project ended in Feb 2026.
-Has no interviews/offers in the pipeline.
-No planned vacations & his communication skills are good.
-Has own Limited company to manage payroll in Sweden.`
-
-// ─── Default form ─────────────────────────────────────────────────────────────
 const FIXED_INTERVIEW = 'Candidate is available for interviews anytime during the week days with prior notice.'
 const FIXED_JOIN_PREFIX = 'He can take up this project'
 
@@ -99,51 +171,44 @@ const EMPTY_FORM = {
   sizzlingExtra: `Fluent in English and Swedish both written and oral.
 Available immediately (Project ended).
 Lives in Stockholm, Sweden and is flexible to be onsite 3 days a week.`,
-  candidateInfo: buildCandidateInfo(''),
+  candidateInfo: buildCandidateInfo('', null, ''),
   fullName: '',
   presentLocation: '',
   emailId: '',
   contactNumber: '',
   nationality: '',
+  workAuthorization: '',
   eligibility: '',
   cvSource: '',
   dob: '',
-  joinNoteSuffix: 'immediately.',   // just the suffix after "He can take up this project"
+  joinNoteSuffix: 'immediately.',
 }
 
 // ─── HTML email builder ───────────────────────────────────────────────────────
 function buildHtmlEmail(f) {
-  const li = (text) =>
-    `<li style="margin-bottom:5px;font-family:Arial,sans-serif;font-size:14px;line-height:1.6">${text.replace(/^[•\-*]\s*/, '')}</li>`
-
-  const bulletBlock = (text) =>
-    text.split('\n').filter(l => l.trim()).map(l => li(l)).join('')
+  const li = t => `<li style="margin-bottom:5px;font-family:Arial,sans-serif;font-size:14px;line-height:1.65">${t.replace(/^[•\-*]\s*/, '')}</li>`
+  const block = text => text.split('\n').filter(l => l.trim()).map(l => li(l)).join('')
 
   const rows = [
-    ['MSP Name', f.mspName],
-    ['Program Name', f.programName],
-    ['Requisition ID', f.requisitionId],
-    ['Requisition Name', f.requisitionName],
-    ['Bill Rate by client', f.billRate],
-    ['Candidate Buy Rate', f.buyRate],
+    ['MSP Name', f.mspName], ['Program Name', f.programName],
+    ['Requisition ID', f.requisitionId], ['Requisition Name', f.requisitionName],
+    ['Bill Rate by client', f.billRate], ['Candidate Buy Rate', f.buyRate],
     ['Submitted Rate by Avance (with Margin)', f.submittedRate],
     ['Candidate Submitted', f.candidateSubmitted],
     ['Submission Deadline', f.submissionDeadline],
     ['Project Duration', f.projectDuration],
   ]
-
   const tableRows = rows.map(([k, v]) => `
     <tr>
       <td style="border:1px solid #cbd5e1;padding:8px 13px;background:#f8fafc;font-weight:600;width:46%;font-family:Arial,sans-serif;font-size:14px;color:#334155">${k}</td>
       <td style="border:1px solid #cbd5e1;padding:8px 13px;font-family:Arial,sans-serif;font-size:14px;color:#1e293b">${v || ''}</td>
     </tr>`).join('')
 
-  const sizzlingLis = []
-  if (f.sizzlingLine1) sizzlingLis.push(li(f.sizzlingLine1))
-  if (f.sizzlingSkills) sizzlingLis.push(`<li style="margin-bottom:5px;font-family:Arial,sans-serif;font-size:14px"><strong>Skills:</strong> ${f.sizzlingSkills}</li>`)
-  if (f.sizzlingLine2) sizzlingLis.push(li(f.sizzlingLine2))
-  if (f.sizzlingLine3) sizzlingLis.push(li(f.sizzlingLine3))
-  const extraLis = bulletBlock(f.sizzlingExtra)
+  const sizzLis = []
+  if (f.sizzlingLine1) sizzLis.push(li(f.sizzlingLine1))
+  if (f.sizzlingSkills) sizzLis.push(`<li style="margin-bottom:5px;font-family:Arial,sans-serif;font-size:14px"><strong>Skills:</strong> ${f.sizzlingSkills}</li>`)
+  if (f.sizzlingLine2) sizzLis.push(li(f.sizzlingLine2))
+  if (f.sizzlingLine3) sizzLis.push(li(f.sizzlingLine3))
 
   const detailLis = [
     f.fullName && li(`Full Name: ${f.fullName}`),
@@ -151,6 +216,7 @@ function buildHtmlEmail(f) {
     f.emailId && li(`Email ID: ${f.emailId}`),
     f.contactNumber && li(`Contact Number: ${f.contactNumber}`),
     f.nationality && li(`Nationality: ${f.nationality}`),
+    f.workAuthorization && li(`Work Authorization: ${f.workAuthorization}`),
     f.eligibility && li(`Eligibility to Work in job location: ${f.eligibility}`),
     f.cvSource && li(`CV Source: ${f.cvSource}`),
     f.dob && li(`DOB: ${f.dob}`),
@@ -162,11 +228,11 @@ function buildHtmlEmail(f) {
   <p style="font-family:Arial,sans-serif;font-size:14px;margin:0 0 8px">Hi <strong>${f.hiName}</strong>,</p>
   <p style="font-family:Arial,sans-serif;font-size:14px;margin:0 0 16px">Please find the attached resume of <strong>${f.candidateName}</strong> for <strong>${f.role}</strong> role at <strong>${f.location}</strong>.</p>
   <table style="border-collapse:collapse;width:100%;margin:0 0 20px;border:1px solid #cbd5e1"><tbody>${tableRows}</tbody></table>
-  ${bulletBlock(f.requirements) ? `<p style="font-family:Arial,sans-serif;font-size:14px;font-weight:bold;margin:0 0 4px">Requirements:</p><ul style="margin:0 0 16px 20px;padding:0">${bulletBlock(f.requirements)}</ul>` : ''}
+  ${block(f.requirements) ? `<p style="font-family:Arial,sans-serif;font-size:14px;font-weight:bold;margin:0 0 4px">Requirements:</p><ul style="margin:0 0 16px 20px;padding:0">${block(f.requirements)}</ul>` : ''}
   <p style="font-family:Arial,sans-serif;font-size:14px;font-weight:bold;margin:0 0 4px">Sizzling:</p>
-  <ul style="margin:0 0 16px 20px;padding:0">${sizzlingLis.join('')}${extraLis}</ul>
+  <ul style="margin:0 0 16px 20px;padding:0">${sizzLis.join('')}${block(f.sizzlingExtra)}</ul>
   <p style="font-family:Arial,sans-serif;font-size:14px;font-weight:bold;margin:0 0 4px">Candidate Information:</p>
-  <ul style="margin:0 0 16px 20px;padding:0">${bulletBlock(f.candidateInfo)}</ul>
+  <ul style="margin:0 0 16px 20px;padding:0">${block(f.candidateInfo)}</ul>
   ${detailLis ? `<p style="font-family:Arial,sans-serif;font-size:14px;font-weight:bold;margin:0 0 4px">Details:</p><ul style="margin:0 0 16px 20px;padding:0">${detailLis}</ul>` : ''}
   <p style="background:#fef9c3;border-left:4px solid #f59e0b;padding:10px 16px;border-radius:4px;font-family:Arial,sans-serif;font-size:14px;margin:0">${interviewLine}</p>
 </div>`
@@ -174,8 +240,7 @@ function buildHtmlEmail(f) {
 
 async function copyHtmlToClipboard(html) {
   try {
-    const blob = new Blob([html], { type: 'text/html' })
-    await navigator.clipboard.write([new ClipboardItem({ 'text/html': blob })])
+    await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }) })])
   } catch {
     const tmp = document.createElement('div')
     tmp.innerHTML = html
@@ -183,30 +248,32 @@ async function copyHtmlToClipboard(html) {
   }
 }
 
-// ─── UI primitives ────────────────────────────────────────────────────────────
+// ─── UI Components ────────────────────────────────────────────────────────────
 function Label({ children, hint, lock }) {
   return (
     <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>
       {children}
       {hint && <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--text-dim)', fontSize: 10.5 }}>{hint}</span>}
-      {lock && <span style={{ fontSize: 10, background: 'var(--accent)', color: '#fff', padding: '1px 6px', borderRadius: 999, fontWeight: 700, letterSpacing: 0 }}>FIXED</span>}
+      {lock && <span style={{ fontSize: 9.5, background: 'var(--accent)', color: '#fff', padding: '1px 6px', borderRadius: 999, fontWeight: 700, letterSpacing: 0 }}>FIXED</span>}
     </label>
   )
 }
 
-function Inp({ value, onChange, placeholder, disabled }) {
+function Inp({ value, onChange, placeholder, disabled, highlight }) {
   return (
     <input value={value} onChange={onChange} placeholder={placeholder} disabled={disabled}
       style={{
-        width: '100%', background: disabled ? 'var(--surface2)' : 'var(--bg)',
-        border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+        width: '100%',
+        background: disabled ? 'var(--surface2)' : highlight ? 'rgba(16,185,129,0.05)' : 'var(--bg)',
+        border: `1px solid ${highlight ? 'rgba(16,185,129,0.4)' : 'var(--border)'}`,
+        borderRadius: 'var(--radius)',
         padding: '9px 13px', color: disabled ? 'var(--text-muted)' : 'var(--text)',
         fontFamily: 'var(--font-body)', fontSize: 13.5, outline: 'none',
-        transition: 'border-color .2s', cursor: disabled ? 'not-allowed' : 'text',
-        boxSizing: 'border-box',
+        transition: 'border-color .2s, background .2s',
+        cursor: disabled ? 'not-allowed' : 'text', boxSizing: 'border-box',
       }}
       onFocus={e => { if (!disabled) e.target.style.borderColor = 'var(--accent)' }}
-      onBlur={e => e.target.style.borderColor = 'var(--border)'}
+      onBlur={e => e.target.style.borderColor = highlight ? 'rgba(16,185,129,0.4)' : 'var(--border)'}
     />
   )
 }
@@ -215,15 +282,14 @@ function TA({ value, onChange, placeholder, rows = 3, glow }) {
   return (
     <textarea value={value} onChange={onChange} placeholder={placeholder} rows={rows}
       style={{
-        width: '100%',
-        background: glow ? 'rgba(59,130,246,0.04)' : 'var(--bg)',
-        border: `1px solid ${glow ? '#3b82f6' : 'var(--border)'}`,
+        width: '100%', background: glow ? 'rgba(59,130,246,0.04)' : 'var(--bg)',
+        border: `1px solid ${glow ? 'rgba(59,130,246,0.5)' : 'var(--border)'}`,
         borderRadius: 'var(--radius)', padding: '9px 13px', color: 'var(--text)',
         fontFamily: 'var(--font-body)', fontSize: 13.5, outline: 'none',
         resize: 'vertical', lineHeight: 1.7, transition: 'border-color .2s', boxSizing: 'border-box',
       }}
       onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-      onBlur={e => e.target.style.borderColor = glow ? '#3b82f6' : 'var(--border)'}
+      onBlur={e => e.target.style.borderColor = glow ? 'rgba(59,130,246,0.5)' : 'var(--border)'}
     />
   )
 }
@@ -237,18 +303,19 @@ function Field({ label, hint, lock, children }) {
   )
 }
 
-function Card({ title, icon, children, glow, tag }) {
+function Card({ title, icon, children, glow, tag, delay = 0 }) {
   return (
-    <div style={{
+    <div className="card-enter" style={{
       background: 'var(--surface)',
       border: `1px solid ${glow ? 'var(--accent)' : 'var(--border)'}`,
       borderRadius: 'var(--radius-lg)', padding: 18, marginBottom: 16,
-      boxShadow: glow ? '0 0 0 1px var(--accent-glow),var(--shadow)' : 'var(--shadow)',
+      boxShadow: glow ? '0 0 0 1px var(--accent-glow), 0 4px 32px rgba(59,130,246,0.1)' : 'var(--shadow)',
+      animationDelay: `${delay}ms`, transition: 'box-shadow 0.2s, border-color 0.2s',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 15 }}>
         <span style={{ fontSize: 15 }}>{icon}</span>
         <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13.5, color: glow ? 'var(--accent2)' : 'var(--text)', flex: 1 }}>{title}</span>
-        {tag && <span style={{ fontSize: 9.5, fontWeight: 800, background: 'rgba(16,185,129,0.15)', color: '#34d399', padding: '2px 8px', borderRadius: 999 }}>{tag}</span>}
+        {tag && <span style={{ fontSize: 9.5, fontWeight: 800, background: 'rgba(16,185,129,0.15)', color: 'var(--success)', padding: '2px 8px', borderRadius: 999, letterSpacing: '0.04em' }}>{tag}</span>}
       </div>
       {children}
     </div>
@@ -261,47 +328,173 @@ function G2({ children }) {
 
 function Alert({ type, children }) {
   const map = {
-    green: { bg: 'rgba(16,185,129,0.1)', border: 'rgba(16,185,129,0.3)', text: '#34d399' },
-    red: { bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.3)', text: '#f87171' },
-    blue: { bg: 'rgba(59,130,246,0.1)', border: 'rgba(59,130,246,0.3)', text: '#60a5fa' },
+    green: { bg: 'rgba(16,185,129,0.08)', border: 'rgba(16,185,129,0.25)', text: '#34d399' },
+    red:   { bg: 'rgba(239,68,68,0.08)',  border: 'rgba(239,68,68,0.25)',  text: '#f87171' },
+    blue:  { bg: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.25)', text: '#60a5fa' },
+    amber: { bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.25)', text: '#fbbf24' },
   }
-  const c = map[type]
+  const c = map[type] || map.blue
   return (
-    <div style={{ padding: '9px 13px', background: c.bg, border: `1px solid ${c.border}`, borderRadius: 8, color: c.text, fontSize: 12.5, marginTop: 10 }}>
+    <div style={{ padding: '9px 13px', background: c.bg, border: `1px solid ${c.border}`, borderRadius: 8, color: c.text, fontSize: 12.5, marginTop: 10, animation: 'fadeIn 0.25s ease' }}>
       {children}
     </div>
   )
 }
 
-// ─── Join Note component (shows fixed prefix, editable suffix) ────────────────
+// ─── Nationality Autocomplete ─────────────────────────────────────────────────
+function NationalityInput({ value, onChange, onResolved }) {
+  const [suggestions, setSuggestions] = useState([])
+  const [open, setOpen] = useState(false)
+  const [highlighted, setHighlighted] = useState(0)
+
+  const handleInput = (e) => {
+    const val = e.target.value
+    onChange(val)
+    if (!val.trim()) { setSuggestions([]); setOpen(false); return }
+    const lower = val.toLowerCase()
+    const filtered = NATIONALITY_SUGGESTIONS.filter(s => s.toLowerCase().startsWith(lower)).slice(0, 8)
+    setSuggestions(filtered)
+    setOpen(filtered.length > 0)
+    setHighlighted(0)
+  }
+
+  const select = (s) => {
+    const resolved = resolveNationality(s)
+    onResolved(resolved)
+    setSuggestions([])
+    setOpen(false)
+  }
+
+  const handleBlur = () => {
+    setTimeout(() => {
+      setOpen(false)
+      if (value) {
+        const resolved = resolveNationality(value)
+        if (resolved !== value) onResolved(resolved)
+      }
+    }, 150)
+  }
+
+  const handleKey = (e) => {
+    if (!open) return
+    if (e.key === 'ArrowDown') { setHighlighted(h => Math.min(h + 1, suggestions.length - 1)); e.preventDefault() }
+    if (e.key === 'ArrowUp') { setHighlighted(h => Math.max(h - 1, 0)); e.preventDefault() }
+    if (e.key === 'Enter') { select(suggestions[highlighted]); e.preventDefault() }
+    if (e.key === 'Escape') setOpen(false)
+  }
+
+  const euStatus = isEUNationality(value)
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <div style={{ position: 'relative' }}>
+        <input
+          value={value}
+          onChange={handleInput}
+          onBlur={handleBlur}
+          onKeyDown={handleKey}
+          onFocus={e => { e.target.style.borderColor = 'var(--accent)'; if (value && suggestions.length > 0) setOpen(true) }}
+          placeholder="Type country or nationality…"
+          autoComplete="off"
+          style={{
+            width: '100%', background: 'var(--bg)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)', padding: '9px 38px 9px 13px',
+            color: 'var(--text)', fontFamily: 'var(--font-body)', fontSize: 13.5,
+            outline: 'none', transition: 'border-color .2s', boxSizing: 'border-box',
+          }}
+        />
+        {value && (
+          <span style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', fontSize: 16 }}>
+            {euStatus === true ? '🇪🇺' : euStatus === false ? '🌍' : ''}
+          </span>
+        )}
+      </div>
+
+      {/* Dropdown */}
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 999,
+          background: 'var(--surface)', border: '1px solid var(--accent)',
+          borderRadius: 8, marginTop: 3, overflow: 'hidden',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)', animation: 'fadeIn 0.15s ease',
+        }}>
+          {suggestions.map((s, i) => {
+            const isEuItem = EU_NATIONALITIES.has(s)
+            return (
+              <div key={s} onMouseDown={() => select(s)} onMouseEnter={() => setHighlighted(i)}
+                style={{
+                  padding: '9px 13px', cursor: 'pointer', fontSize: 13.5,
+                  background: i === highlighted ? 'var(--accent-glow)' : 'transparent',
+                  color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8,
+                  borderBottom: i < suggestions.length - 1 ? '1px solid var(--border)' : 'none',
+                  transition: 'background .1s',
+                }}>
+                <span>{isEuItem ? '🇪🇺' : '🌍'}</span>
+                <span>{s}</span>
+                {isEuItem && <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--success)', fontWeight: 700 }}>EU/EEA</span>}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Status line */}
+      {value && euStatus !== null && (
+        <div style={{ marginTop: 5, fontSize: 11.5, animation: 'fadeIn 0.2s ease', color: euStatus ? 'var(--success)' : '#f59e0b' }}>
+          {euStatus ? '✓ EU/EEA National — No work permit required' : '⚠ Non-EU — Work authorization required'}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Work Authorization field (slides in for non-EU) ─────────────────────────
+function WorkAuthField({ value, onChange, show }) {
+  if (!show) return null
+  return (
+    <div style={{ animation: 'slideDown 0.3s ease', gridColumn: '1 / -1' }}>
+      <div style={{ background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.35)', borderRadius: 10, padding: '12px 14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8 }}>
+          <span style={{ fontSize: 14 }}>⚠️</span>
+          <span style={{ fontSize: 11, fontWeight: 800, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Work Authorization Required</span>
+        </div>
+        <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>
+          Work Permit / Authorization Status
+          <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 6, fontSize: 10.5, color: 'var(--text-dim)' }}>auto-fills Candidate Info bullet</span>
+        </label>
+        <input value={value} onChange={onChange}
+          placeholder="e.g. Dependent work permit, Valid till Dec 2029"
+          style={{
+            width: '100%', background: 'var(--bg)', border: '1px solid rgba(245,158,11,0.4)',
+            borderRadius: 8, padding: '9px 13px', color: 'var(--text)',
+            fontFamily: 'var(--font-body)', fontSize: 13.5, outline: 'none',
+            transition: 'border-color .2s', boxSizing: 'border-box',
+          }}
+          onFocus={e => e.target.style.borderColor = '#f59e0b'}
+          onBlur={e => e.target.style.borderColor = 'rgba(245,158,11,0.4)'}
+        />
+        <p style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 5 }}>
+          📝 This will appear in Candidate Info as: "<em>{value || 'Dependent work permit, Valid till Dec 2029'} and his wife is working for Prodware as permanent employee on a sponsored visa.</em>"
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// ─── Join Note field ──────────────────────────────────────────────────────────
 function JoinNoteField({ value, onChange }) {
   return (
     <div>
-      <Label hint="suffix is editable">Joining Note</Label>
-      <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden', background: 'var(--bg)' }}
-        onFocus={() => {}} >
-        {/* Fixed prefix — visually looks like part of the input */}
-        <span style={{
-          padding: '9px 10px 9px 13px', background: 'var(--surface2)',
-          color: 'var(--text-muted)', fontSize: 13.5, fontFamily: 'var(--font-body)',
-          whiteSpace: 'nowrap', borderRight: '1px solid var(--border)', flexShrink: 0,
-        }}>
+      <Label hint="only the suffix is editable">Joining Note</Label>
+      <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden', background: 'var(--bg)' }}>
+        <span style={{ padding: '9px 10px 9px 13px', background: 'var(--surface2)', color: 'var(--text-muted)', fontSize: 13.5, fontFamily: 'var(--font-body)', whiteSpace: 'nowrap', borderRight: '1px solid var(--border)', flexShrink: 0 }}>
           {FIXED_JOIN_PREFIX}
         </span>
-        {/* Editable suffix */}
-        <input
-          value={value}
-          onChange={onChange}
-          placeholder="immediately."
-          style={{
-            flex: 1, background: 'transparent', border: 'none', outline: 'none',
-            padding: '9px 13px', color: 'var(--text)',
-            fontFamily: 'var(--font-body)', fontSize: 13.5,
-          }}
-        />
+        <input value={value} onChange={onChange} placeholder="immediately."
+          style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', padding: '9px 13px', color: 'var(--text)', fontFamily: 'var(--font-body)', fontSize: 13.5 }} />
       </div>
       <p style={{ fontSize: 10.5, color: 'var(--text-dim)', marginTop: 4 }}>
-        Preview: <em>Interview: {FIXED_INTERVIEW} {FIXED_JOIN_PREFIX} {value || 'immediately.'}</em>
+        Preview: <em style={{ color: 'var(--text-muted)' }}>Interview: {FIXED_INTERVIEW} {FIXED_JOIN_PREFIX} {value || 'immediately.'}</em>
       </p>
     </div>
   )
@@ -313,6 +506,7 @@ function CVUploader({ onExtracted, onTextReady }) {
   const [fileName, setFileName] = useState('')
   const [err, setErr] = useState('')
   const [pii, setPii] = useState(null)
+  const [dragOver, setDragOver] = useState(false)
   const ref = useRef()
 
   const process = async (file) => {
@@ -329,40 +523,40 @@ function CVUploader({ onExtracted, onTextReady }) {
       if (!raw.trim()) { setStatus('error'); setErr('No text extracted. Try another format.'); return }
       const found = extractPII(raw)
       setPii(found)
-      onExtracted(found, raw)
+      onExtracted(found)
       onTextReady(stripPII(raw))
       setStatus('done')
     } catch (e) { setStatus('error'); setErr(e.message || 'Parse failed.') }
   }
 
+  const borderColor = status === 'done' ? 'var(--success)' : status === 'error' ? '#ef4444' : dragOver ? 'var(--accent)' : 'var(--border)'
+
   return (
     <div>
-      <div
-        onDrop={e => { e.preventDefault(); process(e.dataTransfer.files[0]) }}
-        onDragOver={e => e.preventDefault()}
+      <div onDrop={e => { e.preventDefault(); setDragOver(false); process(e.dataTransfer.files[0]) }}
+        onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+        onDragLeave={() => setDragOver(false)}
         onClick={() => ref.current.click()}
         style={{
-          border: `2px dashed ${status === 'done' ? '#10b981' : status === 'error' ? '#ef4444' : 'var(--border)'}`,
-          borderRadius: 10, padding: 20, textAlign: 'center', cursor: 'pointer',
-          background: status === 'done' ? 'rgba(16,185,129,0.05)' : 'var(--bg)', transition: 'all .2s', marginBottom: 10,
-        }}
-      >
-        <input ref={ref} type="file" accept=".pdf,.doc,.docx,.txt" style={{ display: 'none' }}
-          onChange={e => process(e.target.files[0])} />
-        {status === 'idle' && <><div style={{ fontSize: 26, marginBottom: 6 }}>📄</div><div style={{ fontWeight: 700, fontSize: 13.5 }}>Drop CV or click to browse</div><div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 3 }}>PDF · DOCX · DOC · TXT</div></>}
-        {status === 'loading' && <><SpinEl size={22} /><div style={{ marginTop: 10, fontSize: 12.5, color: 'var(--text-muted)' }}>Parsing {fileName}…</div></>}
-        {status === 'done' && <><div style={{ fontSize: 26, marginBottom: 4 }}>✅</div><div style={{ fontWeight: 700, fontSize: 13.5, color: '#10b981' }}>{fileName}</div><div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>Parsed — PII filled locally, AI gets safe copy</div></>}
-        {status === 'error' && <><div style={{ fontSize: 26, marginBottom: 4 }}>❌</div><div style={{ fontWeight: 700, fontSize: 12.5, color: '#ef4444' }}>{err}</div><div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>Click to retry</div></>}
+          border: `2px dashed ${borderColor}`, borderRadius: 12, padding: 22,
+          textAlign: 'center', cursor: 'pointer',
+          background: dragOver ? 'rgba(59,130,246,0.05)' : status === 'done' ? 'rgba(16,185,129,0.04)' : 'var(--bg)',
+          transition: 'all .25s', marginBottom: 10,
+          transform: dragOver ? 'scale(1.01)' : 'scale(1)',
+        }}>
+        <input ref={ref} type="file" accept=".pdf,.doc,.docx,.txt" style={{ display: 'none' }} onChange={e => process(e.target.files[0])} />
+        {status === 'idle' && <div style={{ animation: 'fadeIn 0.3s ease' }}><div style={{ fontSize: 28, marginBottom: 7 }}>📄</div><div style={{ fontWeight: 700, fontSize: 14, marginBottom: 3 }}>Drop CV here or click to browse</div><div style={{ fontSize: 12, color: 'var(--text-muted)' }}>PDF · DOCX · DOC · TXT</div></div>}
+        {status === 'loading' && <div style={{ animation: 'fadeIn 0.3s ease' }}><SpinEl size={26} /><div style={{ marginTop: 10, fontSize: 13, color: 'var(--text-muted)' }}>Parsing <strong>{fileName}</strong>…</div></div>}
+        {status === 'done' && <div style={{ animation: 'fadeIn 0.3s ease' }}><div style={{ fontSize: 28, marginBottom: 5 }}>✅</div><div style={{ fontWeight: 700, fontSize: 14, color: 'var(--success)', marginBottom: 2 }}>{fileName}</div><div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Parsed — PII auto-filled locally · AI gets safe copy</div><div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>Click to upload different file</div></div>}
+        {status === 'error' && <div style={{ animation: 'fadeIn 0.3s ease' }}><div style={{ fontSize: 28, marginBottom: 5 }}>❌</div><div style={{ fontWeight: 700, fontSize: 13, color: '#f87171', marginBottom: 3 }}>{err}</div><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Click to try again</div></div>}
       </div>
-
-      <Alert type="green">🔒 <strong>Privacy Safe:</strong> Email, Phone & DOB are extracted in your browser only and fill the form boxes. They are <strong>never sent to Groq AI</strong>.</Alert>
-
+      <Alert type="green">🔒 <strong>Privacy Safe:</strong> Email, Phone & DOB are extracted in your browser only. They are <strong>never sent to Groq AI</strong>.</Alert>
       {pii && status === 'done' && (
-        <div style={{ marginTop: 8, padding: '9px 12px', background: 'var(--surface2)', borderRadius: 8, fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.9 }}>
-          <strong style={{ color: 'var(--text)' }}>🔍 Auto-detected (local only):</strong><br />
-          {pii.name && <span>👤 <strong style={{ color: 'var(--text)' }}>{pii.name}</strong>  </span>}
-          {pii.email && <span>✉️ <strong style={{ color: 'var(--text)' }}>{pii.email}</strong>  </span>}
-          {pii.phone && <span>📞 <strong style={{ color: 'var(--text)' }}>{pii.phone}</strong>  </span>}
+        <div style={{ marginTop: 8, padding: '9px 12px', background: 'var(--surface2)', borderRadius: 8, fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 2, animation: 'fadeIn 0.3s ease' }}>
+          <strong style={{ color: 'var(--text)', fontSize: 12 }}>🔍 Auto-detected (local only):</strong><br />
+          {pii.name && <span style={{ marginRight: 12 }}>👤 <strong style={{ color: 'var(--text)' }}>{pii.name}</strong></span>}
+          {pii.email && <span style={{ marginRight: 12 }}>✉️ <strong style={{ color: 'var(--text)' }}>{pii.email}</strong></span>}
+          {pii.phone && <span style={{ marginRight: 12 }}>📞 <strong style={{ color: 'var(--text)' }}>{pii.phone}</strong></span>}
           {pii.dob && <span>🎂 <strong style={{ color: 'var(--text)' }}>{pii.dob}</strong></span>}
         </div>
       )}
@@ -370,7 +564,6 @@ function CVUploader({ onExtracted, onTextReady }) {
   )
 }
 
-// ─── Email preview ────────────────────────────────────────────────────────────
 function EmailPreview({ form }) {
   return (
     <div style={{ background: '#fff', borderRadius: 'var(--radius-lg)', padding: '36px 40px', boxShadow: '0 8px 40px rgba(0,0,0,0.5)' }}
@@ -386,81 +579,130 @@ export default function App() {
   const [aiError, setAiError] = useState('')
   const [aiSuccess, setAiSuccess] = useState(false)
   const [copied, setCopied] = useState(false)
+  // Track if user has manually edited candidateInfo
+  const [candInfoManual, setCandInfoManual] = useState(false)
 
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }))
-  const setVal = (k, v) => setForm(f => ({ ...f, [k]: v }))
-
-  // Role ↔ Requisition Name sync
   const setRole = e => { const v = e.target.value; setForm(f => ({ ...f, role: v, requisitionName: v })) }
   const setReqName = e => { const v = e.target.value; setForm(f => ({ ...f, requisitionName: v, role: v })) }
 
-  // Candidate name → auto-update first line of candidateInfo + fullName
+  // ── Rebuild candidateInfo whenever name, nationality, or workAuth changes ──
+  const rebuildCandidateInfo = (name, nationality, workAuth) => {
+    const eu = isEUNationality(nationality)
+    return buildCandidateInfo(name, eu, workAuth)
+  }
+
+  // Candidate name handler
   const setCandName = e => {
     const name = e.target.value
     setForm(f => {
-      const lines = f.candidateInfo.split('\n')
-      // Always rebuild first line with new name
-      lines[0] = `${name || '[Candidate Name]'} is actively looking for new opportunities, as his recent project ended in Feb 2026.`
-      return { ...f, candidateName: name, fullName: name, candidateInfo: lines.join('\n') }
+      const newInfo = candInfoManual ? f.candidateInfo.replace(
+        /^.+is actively looking/,
+        `${name || '[Candidate Name]'} is actively looking`
+      ) : rebuildCandidateInfo(name, f.nationality, f.workAuthorization)
+      return { ...f, candidateName: name, fullName: name, candidateInfo: newInfo }
     })
   }
 
-  // When candidateInfo is manually edited but candidateName changes later,
-  // we only replace first line, preserving manual edits on other lines
-  const setCandInfo = e => setForm(f => ({ ...f, candidateInfo: e.target.value }))
-
-  // CV upload callbacks
-  const handleExtracted = (pii, _raw) => {
+  // Nationality handler — also updates eligibility and candidateInfo
+  const handleNationalityResolved = (resolved) => {
+    const eu = isEUNationality(resolved)
+    const eligibility = eu === true ? 'Yes, EU National' : eu === false ? 'Yes' : ''
     setForm(f => {
-      const name = pii.name || f.candidateName
-      const lines = f.candidateInfo.split('\n')
-      lines[0] = `${name || '[Candidate Name]'} is actively looking for new opportunities, as his recent project ended in Feb 2026.`
+      const newInfo = candInfoManual ? f.candidateInfo
+        : rebuildCandidateInfo(f.candidateName, resolved, f.workAuthorization)
       return {
         ...f,
-        candidateName: name,
-        fullName: name,
+        nationality: resolved,
+        eligibility,
+        // Clear work auth if switching to EU
+        workAuthorization: eu === true ? '' : f.workAuthorization,
+        candidateInfo: newInfo,
+      }
+    })
+  }
+
+  const handleNationalityChange = (val) => {
+    setForm(f => ({ ...f, nationality: val }))
+  }
+
+  // Work authorization handler — updates candidateInfo bullet
+  const handleWorkAuthChange = e => {
+    const workAuth = e.target.value
+    setForm(f => {
+      const newInfo = candInfoManual ? f.candidateInfo
+        : rebuildCandidateInfo(f.candidateName, f.nationality, workAuth)
+      return { ...f, workAuthorization: workAuth, candidateInfo: newInfo }
+    })
+  }
+
+  // Manual edit of candidateInfo
+  const setCandInfo = e => {
+    setCandInfoManual(true)
+    setForm(f => ({ ...f, candidateInfo: e.target.value }))
+  }
+
+  // Reset manual flag when form resets
+  const reset = () => {
+    if (window.confirm('Reset all fields to defaults?')) {
+      setForm(EMPTY_FORM)
+      setCandInfoManual(false)
+    }
+  }
+
+  // CV upload
+  const handleExtracted = (pii) => {
+    setForm(f => {
+      const name = pii.name || f.candidateName
+      const resolvedNat = pii.nationality ? resolveNationality(pii.nationality) : f.nationality
+      const eu = isEUNationality(resolvedNat)
+      const eligibility = eu === true ? 'Yes, EU National' : eu === false ? 'Yes' : (pii.eligibility || f.eligibility)
+      const newInfo = rebuildCandidateInfo(name, resolvedNat, f.workAuthorization)
+      setCandInfoManual(false)
+      return {
+        ...f,
+        candidateName: name, fullName: name,
         emailId: pii.email || f.emailId,
         contactNumber: pii.phone || f.contactNumber,
         dob: pii.dob || f.dob,
         presentLocation: pii.location || f.presentLocation,
-        nationality: pii.nationality || f.nationality,
-        eligibility: pii.eligibility || f.eligibility,
+        nationality: resolvedNat,
+        eligibility,
         cvSource: pii.cvSource || f.cvSource,
-        candidateInfo: lines.join('\n'),
+        candidateInfo: newInfo,
       }
     })
   }
 
   const handleTextReady = safeText => setForm(f => ({ ...f, cvText: safeText }))
 
-  // AI Generate
   const generateAI = async () => {
     if (!form.cvText.trim() || !form.requirements.trim()) {
-      setAiError('Please upload a CV (or paste CV text) and fill Job Requirements first.'); return
+      setAiError('Please upload a CV (or paste CV text) and fill in Job Requirements first.'); return
     }
     setAiLoading(true); setAiError(''); setAiSuccess(false)
     try {
       const apiBase = import.meta.env.VITE_API_URL || ''
       const { data } = await axios.post(`${apiBase}/api/generate-sizzling`, {
-        cv_text: form.cvText,
-        jd_text: form.requirements,
+        cv_text: form.cvText, jd_text: form.requirements,
       })
       const [s1, s2, s3] = data.top_sentences
       setForm(f => ({
         ...f,
         candidateName: f.candidateName || data.candidate_name || '',
         fullName: f.fullName || data.candidate_name || '',
-        sizzlingLine1: s1 || '',
-        sizzlingLine2: s2 || '',
-        sizzlingLine3: s3 || '',
+        sizzlingLine1: s1 || '', sizzlingLine2: s2 || '', sizzlingLine3: s3 || '',
         sizzlingSkills: data.skills.join(', '),
       }))
       setAiSuccess(true)
     } catch (err) {
-      setAiError(err?.response?.data?.detail || 'AI generation failed. Check backend & GROQ_API_KEY.')
-    } finally {
-      setAiLoading(false)
-    }
+      const detail = err?.response?.data?.detail
+      const status = err?.response?.status
+      if (status === 429) setAiError('⏳ Rate limit hit — please wait 20-30 seconds and try again.')
+      else if (status === 500) setAiError(`Server error: ${detail || 'Unknown error'}`)
+      else if (!err?.response) setAiError('Cannot reach backend. Check your internet connection.')
+      else setAiError(detail || 'AI generation failed. Check backend & GROQ_API_KEY.')
+    } finally { setAiLoading(false) }
   }
 
   const handleCopy = async () => {
@@ -468,36 +710,31 @@ export default function App() {
     setCopied(true); setTimeout(() => setCopied(false), 2500)
   }
 
-  const reset = () => { if (window.confirm('Reset all fields?')) setForm(EMPTY_FORM) }
+  const needsWorkAuth = isEUNationality(form.nationality) === false
 
-  // ── Render ──
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
-
       {/* Header */}
-      <header style={{ borderBottom: '1px solid var(--border)', padding: '0 28px', background: 'var(--surface)', position: 'sticky', top: 0, zIndex: 100 }}>
+      <header style={{ borderBottom: '1px solid var(--border)', padding: '0 28px', background: 'rgba(22,26,34,0.92)', backdropFilter: 'blur(12px)', position: 'sticky', top: 0, zIndex: 100 }}>
         <div style={{ maxWidth: 1460, margin: '0 auto', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>✉️</div>
+            <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, #3b82f6, #6366f1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17, boxShadow: '0 2px 12px rgba(99,102,241,0.4)' }}>✉️</div>
             <div>
-              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15 }}>RecruitMail</div>
-              <div style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>AI-Powered · Privacy Safe</div>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 16, letterSpacing: '-0.02em' }}>RecruitMail</div>
+              <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: -1 }}>AI-Powered · Privacy Safe · Europe Focus</div>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 5 }}>
+          <div style={{ display: 'flex', gap: 4, background: 'var(--surface2)', padding: 3, borderRadius: 9, border: '1px solid var(--border)' }}>
             {['form', 'preview'].map(v => (
-              <button key={v} onClick={() => setView(v)} style={{
-                padding: '5px 16px', borderRadius: 7, border: 'none', cursor: 'pointer',
-                fontFamily: 'var(--font-body)', fontWeight: 600, fontSize: 12.5,
-                background: view === v ? 'var(--accent)' : 'transparent',
-                color: view === v ? '#fff' : 'var(--text-muted)', transition: 'all .2s',
-              }}>{v === 'form' ? '📝 Form' : '👁 Preview'}</button>
+              <button key={v} onClick={() => setView(v)} style={{ padding: '5px 18px', borderRadius: 7, border: 'none', cursor: 'pointer', fontFamily: 'var(--font-body)', fontWeight: 600, fontSize: 12.5, background: view === v ? 'var(--accent)' : 'transparent', color: view === v ? '#fff' : 'var(--text-muted)', transition: 'all .2s', boxShadow: view === v ? '0 2px 8px rgba(59,130,246,0.3)' : 'none' }}>
+                {v === 'form' ? '📝 Form' : '👁 Preview'}
+              </button>
             ))}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={reset} style={ghostBtn}>Reset</button>
+            <button onClick={reset} style={ghostBtn}>↺ Reset</button>
             <button onClick={handleCopy} style={copied ? successBtn : primaryBtn}>
-              {copied ? '✓ Copied!' : '📋 Copy Email'}
+              {copied ? '✓ Copied to Clipboard!' : '📋 Copy Email'}
             </button>
           </div>
         </div>
@@ -508,218 +745,167 @@ export default function App() {
         {view === 'form' ? (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
 
-            {/* ══ LEFT COLUMN ══ */}
+            {/* LEFT */}
             <div>
-              {/* CV Upload */}
-              <Card title="Upload Candidate CV" icon="📁" tag="AUTO-FILL">
+              <Card title="Upload Candidate CV" icon="📁" tag="AUTO-FILL" delay={0}>
                 <CVUploader onExtracted={handleExtracted} onTextReady={handleTextReady} />
               </Card>
 
-              {/* Greeting & Role */}
-              <Card title="Greeting & Role" icon="👋">
+              <Card title="Greeting & Role" icon="👋" delay={50}>
                 <G2>
-                  <Field label="Hi (Recipient Name)" hint="default: Mahesh">
-                    <Inp value={form.hiName} onChange={set('hiName')} placeholder="Mahesh" />
-                  </Field>
-                  <Field label="Candidate Name" hint="auto-fills on upload + info bullets">
-                    <Inp value={form.candidateName} onChange={setCandName} placeholder="Ravi" />
-                  </Field>
-                  <Field label="Role / Position" hint="→ syncs Requisition Name">
-                    <Inp value={form.role} onChange={setRole} placeholder="Operational QA Coordinator / Tester" />
-                  </Field>
-                  <Field label="Location">
-                    <Inp value={form.location} onChange={set('location')} placeholder="Stockholm, Sweden" />
-                  </Field>
+                  <Field label="Hi (Recipient Name)" hint="default: Mahesh"><Inp value={form.hiName} onChange={set('hiName')} placeholder="Mahesh" /></Field>
+                  <Field label="Candidate Name" hint="auto-fills on upload"><Inp value={form.candidateName} onChange={setCandName} placeholder="Ravi" /></Field>
+                  <Field label="Role / Position" hint="→ syncs Requisition Name"><Inp value={form.role} onChange={setRole} placeholder="Operational QA Coordinator / Tester" /></Field>
+                  <Field label="Location"><Inp value={form.location} onChange={set('location')} placeholder="Stockholm, Sweden" /></Field>
                 </G2>
               </Card>
 
-              {/* Submission Details */}
-              <Card title="Submission Details" icon="📋">
+              <Card title="Submission Details" icon="📋" delay={100}>
                 <G2>
-                  <Field label="MSP Name">
-                    <Inp value={form.mspName} onChange={set('mspName')} placeholder="KeyMan AB" />
-                  </Field>
-                  <Field label="Program Name">
-                    <Inp value={form.programName} onChange={set('programName')} placeholder="(optional)" />
-                  </Field>
-                  <Field label="Requisition ID">
-                    <Inp value={form.requisitionId} onChange={set('requisitionId')} placeholder="HO287890" />
-                  </Field>
-                  <Field label="Requisition Name" hint="synced with Role">
-                    <Inp value={form.requisitionName} onChange={setReqName} placeholder="auto-filled from Role" />
-                  </Field>
-                  <Field label="Bill Rate by Client" lock>
-                    <Inp value={form.billRate} disabled />
-                  </Field>
-                  <Field label="Candidate Buy Rate">
-                    <Inp value={form.buyRate} onChange={set('buyRate')} placeholder="Gross - 600 SEK/Hour" />
-                  </Field>
-                  <Field label="Submitted Rate (with Margin)" lock>
-                    <Inp value={form.submittedRate} disabled />
-                  </Field>
-                  <Field label="Candidate Submitted">
-                    <Inp value={form.candidateSubmitted} onChange={set('candidateSubmitted')} placeholder="14th Jun 2026" />
-                  </Field>
-                  <Field label="Submission Deadline">
-                    <Inp value={form.submissionDeadline} onChange={set('submissionDeadline')} placeholder="13th Jun 2026" />
-                  </Field>
-                  <Field label="Project Duration">
-                    <Inp value={form.projectDuration} onChange={set('projectDuration')} placeholder="2026-06-01 to 2027-03-31" />
-                  </Field>
+                  <Field label="MSP Name"><Inp value={form.mspName} onChange={set('mspName')} placeholder="KeyMan AB" /></Field>
+                  <Field label="Program Name"><Inp value={form.programName} onChange={set('programName')} placeholder="(optional)" /></Field>
+                  <Field label="Requisition ID"><Inp value={form.requisitionId} onChange={set('requisitionId')} placeholder="HO287890" /></Field>
+                  <Field label="Requisition Name" hint="synced with Role"><Inp value={form.requisitionName} onChange={setReqName} placeholder="auto-filled from Role" /></Field>
+                  <Field label="Bill Rate by Client" lock><Inp value={form.billRate} disabled /></Field>
+                  <Field label="Candidate Buy Rate"><Inp value={form.buyRate} onChange={set('buyRate')} placeholder="Gross - 600 SEK/Hour" /></Field>
+                  <Field label="Submitted Rate (with Margin)" lock><Inp value={form.submittedRate} disabled /></Field>
+                  <Field label="Candidate Submitted"><Inp value={form.candidateSubmitted} onChange={set('candidateSubmitted')} placeholder="14th Jun 2026" /></Field>
+                  <Field label="Submission Deadline"><Inp value={form.submissionDeadline} onChange={set('submissionDeadline')} placeholder="13th Jun 2026" /></Field>
+                  <Field label="Project Duration"><Inp value={form.projectDuration} onChange={set('projectDuration')} placeholder="2026-06-01 to 2027-03-31" /></Field>
                 </G2>
               </Card>
 
-              {/* Candidate Details */}
-              <Card title="Candidate Details" icon="🪪" tag="AUTO-FILL">
+              <Card title="Candidate Details" icon="🪪" tag="AUTO-FILL" delay={150}>
                 <G2>
-                  <Field label="Full Name" hint="auto-filled">
-                    <Inp value={form.fullName} onChange={set('fullName')} placeholder="Ravi Kumar" />
+                  <Field label="Full Name" hint="auto-filled"><Inp value={form.fullName} onChange={set('fullName')} placeholder="Ravi Kumar" /></Field>
+                  <Field label="Present Location" hint="auto-filled"><Inp value={form.presentLocation} onChange={set('presentLocation')} placeholder="Stockholm, Sweden" /></Field>
+                  <Field label="Email ID" hint="🔒 local only"><Inp value={form.emailId} onChange={set('emailId')} placeholder="ravi@gmail.com" /></Field>
+                  <Field label="Contact Number" hint="🔒 local only"><Inp value={form.contactNumber} onChange={set('contactNumber')} placeholder="+46(0)760057444" /></Field>
+
+                  {/* Nationality autocomplete */}
+                  <div style={{ marginBottom: 13 }}>
+                    <Label hint="type country or nationality">Nationality</Label>
+                    <NationalityInput
+                      value={form.nationality}
+                      onChange={handleNationalityChange}
+                      onResolved={handleNationalityResolved}
+                    />
+                  </div>
+
+                  {/* Eligibility — auto-filled, highlighted when set */}
+                  <Field label="Eligibility to Work" hint="auto-fills from nationality">
+                    <Inp
+                      value={form.eligibility}
+                      onChange={set('eligibility')}
+                      placeholder="auto-filled"
+                      highlight={!!form.eligibility}
+                    />
+                    {form.eligibility && (
+                      <div style={{ fontSize: 10.5, marginTop: 3, color: isEUNationality(form.nationality) ? 'var(--success)' : '#f59e0b' }}>
+                        {isEUNationality(form.nationality) === true ? '✓ Yes, EU National' : '✓ Yes (with work authorization)'}
+                      </div>
+                    )}
                   </Field>
-                  <Field label="Present Location" hint="auto-filled">
-                    <Inp value={form.presentLocation} onChange={set('presentLocation')} placeholder="Stockholm, Sweden" />
-                  </Field>
-                  <Field label="Email ID" hint="🔒 local only">
-                    <Inp value={form.emailId} onChange={set('emailId')} placeholder="ravi@gmail.com" />
-                  </Field>
-                  <Field label="Contact Number" hint="🔒 local only">
-                    <Inp value={form.contactNumber} onChange={set('contactNumber')} placeholder="+46(0)760057444" />
-                  </Field>
-                  <Field label="Nationality" hint="auto-filled">
-                    <Inp value={form.nationality} onChange={set('nationality')} placeholder="Swedish" />
-                  </Field>
-                  <Field label="Eligibility to Work" hint="auto-filled">
-                    <Inp value={form.eligibility} onChange={set('eligibility')} placeholder="Yes, EU National" />
-                  </Field>
-                  <Field label="CV Source" hint="auto-filled">
-                    <Inp value={form.cvSource} onChange={set('cvSource')} placeholder="LinkedIn" />
-                  </Field>
-                  <Field label="Date of Birth" hint="🔒 local only">
-                    <Inp value={form.dob} onChange={set('dob')} placeholder="15th Mar 1975" />
-                  </Field>
+
+                  <Field label="CV Source" hint="auto-filled"><Inp value={form.cvSource} onChange={set('cvSource')} placeholder="LinkedIn" /></Field>
+                  <Field label="Date of Birth" hint="🔒 local only"><Inp value={form.dob} onChange={set('dob')} placeholder="15th Mar 1975" /></Field>
+
+                  {/* Work Authorization — only for non-EU */}
+                  <WorkAuthField value={form.workAuthorization} onChange={handleWorkAuthChange} show={needsWorkAuth} />
                 </G2>
 
-                {/* Interview note row */}
                 <div style={{ marginTop: 6 }}>
-                  <Field label="Interview Note" lock>
-                    <Inp value={FIXED_INTERVIEW} disabled />
-                  </Field>
-                  {/* Join note with fixed prefix */}
-                  <JoinNoteField
-                    value={form.joinNoteSuffix}
-                    onChange={set('joinNoteSuffix')}
-                  />
+                  <Field label="Interview Note" lock><Inp value={FIXED_INTERVIEW} disabled /></Field>
+                  <JoinNoteField value={form.joinNoteSuffix} onChange={set('joinNoteSuffix')} />
                 </div>
               </Card>
             </div>
 
-            {/* ══ RIGHT COLUMN ══ */}
+            {/* RIGHT */}
             <div>
-              {/* JD */}
-              <Card title="Job Requirements (from JD)" icon="📄">
+              <Card title="Job Requirements (from JD)" icon="📄" delay={0}>
                 <Field label="Paste requirements — one per line">
                   <TA value={form.requirements} onChange={set('requirements')} rows={7}
-                    placeholder={"Good experience in coordinating and following up on testing activities between teams\nExperience in performing End to End tests and other tests\nExperience in planning and coordination\nExperience in developing and analyzing KPIs\nExperience working in Jira or similar tools\nHave a good command of the Swedish language"} />
+                    placeholder={"Good experience in coordinating and following up on testing activities\nExperience in performing End to End tests\nExperience in planning and coordination\nExperience in developing and analyzing KPIs\nExperience working in Jira or similar tools\nHave a good command of the Swedish language"} />
                 </Field>
               </Card>
 
-              {/* AI Sizzling */}
-              <Card title="AI Sizzling Generator" icon="🤖" glow>
+              <Card title="AI Sizzling Generator" icon="🤖" glow delay={50}>
                 <Alert type="blue">🛡️ <strong>Privacy safe:</strong> Email, phone & DOB are replaced with [REDACTED] before being sent to Groq AI.</Alert>
-
                 <div style={{ marginTop: 12 }}>
                   <Field label="CV Text" hint="auto-filled on upload (PII stripped) — or paste manually">
-                    <TA value={form.cvText} onChange={set('cvText')} rows={7}
-                      placeholder="Upload a CV above, or paste CV text here. Email/phone will be auto-stripped before AI." />
+                    <TA value={form.cvText} onChange={set('cvText')} rows={7} placeholder="Upload a CV above, or paste CV text here manually…" />
                   </Field>
                 </div>
-
                 <button onClick={generateAI} disabled={aiLoading} style={{
-                  width: '100%', padding: '11px', fontSize: 13.5, border: 'none', borderRadius: 9,
+                  width: '100%', padding: '12px', fontSize: 13.5, border: 'none', borderRadius: 9,
                   background: aiLoading ? '#374151' : 'linear-gradient(135deg,#3b82f6,#6366f1)',
                   color: '#fff', fontFamily: 'var(--font-body)', fontWeight: 700,
                   cursor: aiLoading ? 'not-allowed' : 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+                  boxShadow: aiLoading ? 'none' : '0 4px 16px rgba(99,102,241,0.3)', transition: 'all 0.2s',
                 }}>
                   {aiLoading ? <><SpinEl />Generating — please wait…</> : '✨ Generate Sizzling with AI'}
                 </button>
-
                 {aiError && <Alert type="red">⚠️ {aiError}</Alert>}
                 {aiSuccess && <Alert type="green">✅ AI complete! Review & edit the fields below.</Alert>}
 
-                {/* ── Sizzling fields — multi-line textareas ── */}
                 <div style={{ marginTop: 16 }}>
-                  <Field label="Sizzling Line 1" hint="AI generated — fully editable">
-                    <TA
-                      value={form.sizzlingLine1}
-                      onChange={set('sizzlingLine1')}
-                      rows={3}
-                      glow={!!form.sizzlingLine1}
-                      placeholder={`Experienced Test Manager with more than 20 years of experience coordinating and following up on testing activities between teams, deliveries and projects, including test planning, coordination and communication with stakeholders in agile environments using Scrum, Kanban and SAFE.`}
-                    />
+                  <Field label="Sizzling Line 1" hint="AI generated — editable">
+                    <TA value={form.sizzlingLine1} onChange={set('sizzlingLine1')} rows={3} glow={!!form.sizzlingLine1} placeholder="Experienced Test Manager with more than 20 years of experience coordinating and following up on testing activities between teams, deliveries and projects, including test planning and communication with stakeholders in agile environments using Scrum, Kanban and SAFE." />
                   </Field>
-
-                  <Field label="Skills" hint="comma separated — AI generated — editable">
-                    <TA
-                      value={form.sizzlingSkills}
-                      onChange={set('sizzlingSkills')}
-                      rows={2}
-                      glow={!!form.sizzlingSkills}
-                      placeholder="Test Management, End to End Testing, System Testing, Integration Testing, Acceptance Testing, Regression Testing, Test Planning, Jira, Zephyr, HP ALM, SAFE, Scrum, Kanban, SQL, REST-services"
-                    />
+                  <Field label="Skills" hint="comma separated — AI generated">
+                    <TA value={form.sizzlingSkills} onChange={set('sizzlingSkills')} rows={2} glow={!!form.sizzlingSkills} placeholder="Test Management, End to End Testing, System Testing, Jira, Zephyr, HP ALM, SAFE, Scrum, Kanban, SQL, REST-services, KPI Analysis, Integration Testing, Acceptance Testing, Regression Testing" />
                   </Field>
-
-                  <Field label="Sizzling Line 2" hint="AI generated — fully editable">
-                    <TA
-                      value={form.sizzlingLine2}
-                      onChange={set('sizzlingLine2')}
-                      rows={3}
-                      glow={!!form.sizzlingLine2}
-                      placeholder={`Proficient in developing and analyzing KPIs and test coverage in projects, administering test cases in Jira, Zephyr, HP ALM and ReQTest, and maintaining collaboration with vendors, CFO alignment and Risk Management across large scale enterprise programs.`}
-                    />
+                  <Field label="Sizzling Line 2" hint="AI generated — editable">
+                    <TA value={form.sizzlingLine2} onChange={set('sizzlingLine2')} rows={3} glow={!!form.sizzlingLine2} placeholder="Proficient in developing and analyzing KPIs and test coverage in projects, administering test cases in Jira, Zephyr, HP ALM and ReQTest, maintaining collaboration with vendors and Risk Management across large scale enterprise programs." />
                   </Field>
-
-                  <Field label="Sizzling Line 3" hint="AI generated — fully editable">
-                    <TA
-                      value={form.sizzlingLine3}
-                      onChange={set('sizzlingLine3')}
-                      rows={3}
-                      glow={!!form.sizzlingLine3}
-                      placeholder={`Demonstrated hands-on testing of SQL databases, ETL flows, REST-services and complex integration-heavy systems within Banking, Retail and Healthcare sectors.`}
-                    />
+                  <Field label="Sizzling Line 3" hint="AI generated — editable">
+                    <TA value={form.sizzlingLine3} onChange={set('sizzlingLine3')} rows={3} glow={!!form.sizzlingLine3} placeholder="Demonstrated hands-on testing of SQL databases, ETL flows, REST-services and complex integration-heavy systems within Banking, Retail and Healthcare sectors." />
                   </Field>
-
                   <Field label="Additional Sizzling Bullets" hint="one per line — editable">
-                    <TA value={form.sizzlingExtra} onChange={set('sizzlingExtra')} rows={4}
-                      placeholder={"Fluent in English and Swedish both written and oral.\nAvailable immediately (Project ended).\nLives in Stockholm, Sweden and is flexible to be onsite 3 days a week."} />
+                    <TA value={form.sizzlingExtra} onChange={set('sizzlingExtra')} rows={4} placeholder={"Fluent in English and Swedish both written and oral.\nAvailable immediately (Project ended).\nLives in Stockholm, Sweden and is flexible to be onsite 3 days a week."} />
                   </Field>
                 </div>
               </Card>
 
-              {/* Candidate Info — pre-filled & editable */}
-              <Card title="Candidate Information Bullets" icon="ℹ️">
-                <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginBottom: 8 }}>
-                  💡 First line updates automatically when you type the <strong style={{ color: 'var(--text)' }}>Candidate Name</strong>. All lines are editable.
-                </p>
-                {/* Show current candidate name for clarity */}
-                {form.candidateName && (
-                  <div style={{ marginBottom: 8, padding: '6px 11px', background: 'rgba(59,130,246,0.08)', borderRadius: 7, fontSize: 12, color: 'var(--accent2)' }}>
-                    👤 Candidate: <strong>{form.candidateName}</strong> — first bullet auto-reflects this name
-                  </div>
-                )}
-                <TA
-                  value={form.candidateInfo}
-                  onChange={setCandInfo}
-                  rows={6}
-                  placeholder={buildCandidateInfo('Candidate Name')}
-                />
+              <Card title="Candidate Information Bullets" icon="ℹ️" delay={100}>
+                <div style={{ marginBottom: 10 }}>
+                  {/* Status bar showing what mode we're in */}
+                  {form.nationality ? (
+                    isEUNationality(form.nationality) === true ? (
+                      <div style={{ padding: '7px 11px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 7, fontSize: 12, color: 'var(--success)', marginBottom: 8 }}>
+                        🇪🇺 EU National — showing standard 4 bullets
+                      </div>
+                    ) : isEUNationality(form.nationality) === false ? (
+                      <div style={{ padding: '7px 11px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 7, fontSize: 12, color: '#f59e0b', marginBottom: 8 }}>
+                        🌍 Non-EU — work permit bullet {form.workAuthorization ? 'auto-inserted ✓' : 'will appear when you fill Work Authorization above'}
+                      </div>
+                    ) : null
+                  ) : (
+                    <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginBottom: 8 }}>
+                      💡 Bullets update automatically based on <strong style={{ color: 'var(--text)' }}>Nationality</strong> and <strong style={{ color: 'var(--text)' }}>Work Authorization</strong>.
+                    </p>
+                  )}
+                  {form.candidateName && (
+                    <div style={{ padding: '5px 11px', background: 'rgba(59,130,246,0.08)', borderRadius: 7, fontSize: 12, color: 'var(--accent2)', marginBottom: 8 }}>
+                      👤 <strong>{form.candidateName}</strong> — reflected in first bullet
+                    </div>
+                  )}
+                  {candInfoManual && (
+                    <div style={{ padding: '5px 11px', background: 'rgba(239,68,68,0.08)', borderRadius: 7, fontSize: 11.5, color: '#f87171', marginBottom: 8 }}>
+                      ✏️ Manually edited — auto-updates paused. Reset form to restore auto-mode.
+                    </div>
+                  )}
+                </div>
+                <TA value={form.candidateInfo} onChange={setCandInfo} rows={7} placeholder={buildCandidateInfo('Candidate Name', null, '')} />
               </Card>
             </div>
           </div>
 
         ) : (
-          /* ── PREVIEW TAB ── */
           <div className="fade-in">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
               <p style={{ color: 'var(--text-muted)', fontSize: 12.5 }}>
                 📌 Click <strong style={{ color: 'var(--text)' }}>Copy Email</strong> then paste into Outlook or Gmail — the table renders correctly.
               </p>
@@ -735,12 +921,11 @@ export default function App() {
   )
 }
 
-// ─── Tiny helpers ─────────────────────────────────────────────────────────────
 function SpinEl({ size = 15 }) {
-  return <span style={{ width: size, height: size, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+  return <span style={{ width: size, height: size, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite', flexShrink: 0 }} />
 }
 
-const _base = { border: 'none', borderRadius: 8, cursor: 'pointer', fontFamily: 'var(--font-body)', fontWeight: 600, fontSize: 13, padding: '8px 18px', transition: 'all .2s' }
-const primaryBtn = { ..._base, background: 'var(--accent)', color: '#fff' }
-const successBtn = { ..._base, background: 'var(--success)', color: '#fff' }
-const ghostBtn = { ..._base, background: 'var(--surface2)', color: 'var(--text-muted)', border: '1px solid var(--border)' }
+const _b = { border: 'none', borderRadius: 8, cursor: 'pointer', fontFamily: 'var(--font-body)', fontWeight: 600, fontSize: 13, padding: '8px 18px', transition: 'all .2s' }
+const primaryBtn = { ..._b, background: 'linear-gradient(135deg,#3b82f6,#6366f1)', color: '#fff', boxShadow: '0 2px 12px rgba(99,102,241,0.3)' }
+const successBtn = { ..._b, background: 'var(--success)', color: '#fff' }
+const ghostBtn = { ..._b, background: 'var(--surface2)', color: 'var(--text-muted)', border: '1px solid var(--border)' }

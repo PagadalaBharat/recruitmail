@@ -4,20 +4,20 @@
   --bg: #0d0f14;
   --surface: #161a22;
   --surface2: #1e2430;
-  --border: #2a3040;
+  --border: #252d3d;
   --accent: #3b82f6;
   --accent2: #60a5fa;
-  --accent-glow: rgba(59,130,246,0.15);
+  --accent-glow: rgba(59,130,246,0.12);
   --success: #10b981;
   --warning: #f59e0b;
   --text: #e8edf5;
   --text-muted: #7a8599;
-  --text-dim: #4a5568;
+  --text-dim: #3d4a5c;
   --font-display: 'Syne', sans-serif;
   --font-body: 'DM Sans', sans-serif;
-  --radius: 10px;
-  --radius-lg: 16px;
-  --shadow: 0 4px 24px rgba(0,0,0,0.4);
+  --radius: 8px;
+  --radius-lg: 14px;
+  --shadow: 0 2px 16px rgba(0,0,0,0.3);
 }
 
 html { scroll-behavior: smooth; }
@@ -27,24 +27,60 @@ body {
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
 
 /* Scrollbar */
-::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
-/* Animations */
-@keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+/* ── Animations ── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-.fade-in { animation: fadeIn 0.4s ease both; }
+@keyframes slideDown {
+  from { opacity: 0; max-height: 0; transform: translateY(-8px); }
+  to   { opacity: 1; max-height: 200px; transform: translateY(0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes cardEnter {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-border {
+  0%, 100% { border-color: rgba(59,130,246,0.4); }
+  50%       { border-color: rgba(59,130,246,0.9); }
+}
+
+/* Classes */
+.fade-in  { animation: fadeIn 0.35s ease both; }
+
+.card-enter {
+  animation: cardEnter 0.4s ease both;
+}
+
+/* Input focus ring */
+input:focus, textarea:focus {
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.15);
+}
+
+/* Button hover lift */
+button:not(:disabled):hover {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+}
+button:not(:disabled):active {
+  transform: translateY(0);
+  filter: brightness(0.96);
+}
