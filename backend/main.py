@@ -10,23 +10,29 @@ load_dotenv()
 
 app = FastAPI(title="Recruiter Email Generator API")
 
-# ── CORS: supports local dev + production Vercel URL ──────────────────────────
+# ── CORS ──────────────────────────────────────────────────────────────────────
 FRONTEND_URL = os.getenv("FRONTEND_URL", "")
-ALLOWED_ORIGINS = ["http://localhost:3000", "http://localhost:5173"]
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+]
 if FRONTEND_URL:
     ALLOWED_ORIGINS.append(FRONTEND_URL)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ── Groq config ───────────────────────────────────────────────────────────────
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_MODEL   = "llama-3.1-8b-instant"
 
 
 class GenerateSizzlingRequest(BaseModel):
@@ -40,9 +46,17 @@ class SizzlingResponse(BaseModel):
     skills: list[str]
 
 
+# ── Groq call with full error handling ───────────────────────────────────────
 async def call_groq(prompt: str) -> str:
     if not GROQ_API_KEY:
-        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "GROQ_API_KEY is not set. "
+                "Add it to your .env file: GROQ_API_KEY=gsk_..."
+            ),
+        )
+
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json",
@@ -53,21 +67,118 @@ async def call_groq(prompt: str) -> str:
         "temperature": 0.3,
         "max_tokens": 1024,
     }
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(GROQ_API_URL, headers=headers, json=payload)
-        if response.status_code == 429:
-            raise HTTPException(status_code=429, detail="Rate limit reached. Please wait 20-30 seconds and try again.")
-        if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail=f"Groq API error: {response.text}")
-        return response.json()["choices"][0]["message"]["content"].strip()
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                GROQ_API_URL, headers=headers, json=payload
+            )
+
+            if response.status_code == 401:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid GROQ_API_KEY. Check your .env file.",
+                )
+            if response.status_code == 429:
+                retry_after = response.headers.get("retry-after", "")
+                wait = f"{retry_after} seconds" if retry_after else "20-30 seconds"
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Groq rate limit reached. Please wait {wait} and try again.",
+                )
+            if response.status_code == 413:
+                raise HTTPException(
+                    status_code=413,
+                    detail="CV text is too large for Groq. Trim it and try again.",
+                )
+            if response.status_code != 200:
+                body = response.text[:300]
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Groq API error ({response.status_code}): {body}",
+                )
+
+            data = response.json()
+            content = data["choices"][0]["message"]["content"].strip()
+            if not content:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Groq returned an empty response. Please try again.",
+                )
+            return content
+
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504,
+            detail="Groq took too long to respond (>60s). Please try again.",
+        )
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail="Cannot reach Groq API. Check your internet connection.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Unexpected error calling Groq: {str(e)}"
+        )
 
 
+# ── JSON parser (tolerant of markdown fences) ─────────────────────────────────
+def parse_json_response(raw: str) -> dict:
+    raw = raw.strip()
+
+    # Strip ```json ... ``` fences
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        inner = parts[1]
+        if inner.lower().startswith("json"):
+            inner = inner[4:]
+        raw = inner.strip()
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: find first { ... } block
+    s, e = raw.find("{"), raw.rfind("}") + 1
+    if s != -1 and e > s:
+        try:
+            return json.loads(raw[s:e])
+        except json.JSONDecodeError:
+            pass
+
+    raise HTTPException(
+        status_code=500,
+        detail=(
+            "AI returned an unexpected format. "
+            "Please try again — if it keeps failing, simplify the CV text."
+        ),
+    )
+
+
+# ── Main endpoint ─────────────────────────────────────────────────────────────
 @app.post("/api/generate-sizzling", response_model=SizzlingResponse)
 async def generate_sizzling(request: GenerateSizzlingRequest):
     cv = request.cv_text.strip()
     jd = request.jd_text.strip()
-    if not cv or not jd:
-        raise HTTPException(status_code=400, detail="CV and JD text are required")
+
+    if not cv:
+        raise HTTPException(status_code=400, detail="CV text is required.")
+    if not jd:
+        raise HTTPException(status_code=400, detail="Job description text is required.")
+    if len(cv) > 40_000:
+        raise HTTPException(
+            status_code=413,
+            detail="CV text is too long (>40,000 chars). Please trim it.",
+        )
+    if len(jd) > 10_000:
+        raise HTTPException(
+            status_code=413,
+            detail="Job description is too long (>10,000 chars). Please trim it.",
+        )
 
     prompt = f"""Act as a senior recruiter. You will receive a candidate CV and a Job Description (JD).
 Perform ALL three tasks and return a single valid JSON object. No markdown, no extra text, JSON only.
@@ -107,25 +218,8 @@ JSON output:"""
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    def parse(raw: str) -> dict:
-        raw = raw.strip()
-        if raw.startswith("```"):
-            parts = raw.split("```")
-            raw = parts[1][4:] if parts[1].startswith("json") else parts[1]
-        raw = raw.strip()
-        try:
-            return json.loads(raw)
-        except Exception:
-            pass
-        s, e = raw.find("{"), raw.rfind("}") + 1
-        if s != -1 and e > s:
-            try:
-                return json.loads(raw[s:e])
-            except Exception:
-                pass
-        raise HTTPException(status_code=500, detail="AI returned unexpected format. Please try again.")
+    parsed = parse_json_response(raw)
 
-    parsed = parse(raw)
     return SizzlingResponse(
         candidate_name=str(parsed.get("candidate_name", "")).strip().strip('"'),
         top_sentences=(parsed.get("top_sentences", []) or [])[:3],
@@ -133,6 +227,11 @@ JSON output:"""
     )
 
 
+# ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "groq_configured": bool(GROQ_API_KEY), "model": GROQ_MODEL}
+    return {
+        "status": "ok",
+        "groq_configured": bool(GROQ_API_KEY),
+        "model": GROQ_MODEL,
+    }
