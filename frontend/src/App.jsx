@@ -2,6 +2,7 @@
 // import { useState, useRef, useCallback, useEffect } from "react";
 // import axios from "axios";
 // import "./App.css";
+// import SkillMatrix from "./SkillMatrix";
 
 // // ─── EU/EEA Country → Nationality mapping ────────────────────────────────────
 // const EU_MAP = {
@@ -107,47 +108,60 @@
 // }
 
 // // ─── Rate helpers ─────────────────────────────────────────────────────────────
-// function calcHourlyFromMonthly(monthly) {
-//   if (!monthly || isNaN(monthly) || monthly <= 0) return null;
-//   return monthly / 19.5 / 0.43 / 8;
-// }
-
+// // ─── Rate helpers ─────────────────────────────────────────────────────────────
+// // Rules:
+// //   600 SEK/Hour  | 50 EUR/Hour   → type "hour"  → "Has own Limited company to manage payroll."
+// //   60000 SEK/Month | 4000 EUR/Month → type "month" → "Willing to work under Avance payroll."
+// // Detection: look for /Hour or /Month (case-insensitive) after a number+currency.
 // function parseBuyRateInput(raw) {
-//   if (!raw?.trim()) return { type: null, formatted: "", hourly: null, currency: "SEK" };
-//   const lower = raw.trim().toLowerCase();
-//   let type = null;
-//   if (/\b(gross|gros)\b/.test(lower)) type = "gross";
-//   else if (/\b(net|nett|netto)\b/.test(lower)) type = "net";
-//   if (!type) return { type: null, formatted: raw, hourly: null, currency: "SEK" };
-//   const numMatch = raw.match(/[\d,\s]+\.?\d*/g);
-//   const nums = (numMatch || [])
-//     .map((n) => parseFloat(n.replace(/[\s,]/g, "")))
-//     .filter((n) => !isNaN(n) && n > 0);
-//   const amount = nums[0];
-//   const currency = /eur/i.test(raw) ? "EUR" : "SEK";
-//   if (!amount) return { type, formatted: raw, hourly: null, currency };
-//   if (type === "gross")
-//     return { type: "gross", formatted: `Gross - ${amount} ${currency}/Hour`, hourly: amount, currency };
-//   if (type === "net") {
-//     const hourly = calcHourlyFromMonthly(amount);
-//     const hourlyStr = hourly ? hourly.toFixed(2) : "?";
+//   if (!raw?.trim()) return { type: null, formatted: "", currency: "SEK" };
+
+//   const str   = raw.trim();
+//   const lower = str.toLowerCase();
+
+//   // Extract the numeric amount (first number found)
+//   const numMatch = str.match(/[\d]+(?:[,.\s]\d+)*/);
+//   const amount   = numMatch ? parseFloat(numMatch[0].replace(/[,\s]/g, "")) : null;
+
+//   // Currency: EUR if "eur" appears, else SEK
+//   const currency = /eur/i.test(str) ? "EUR" : "SEK";
+
+//   // Detect unit: /hour or /month (with optional space before slash)
+//   const isHour  = /\/\s*h(our)?/i.test(str);
+//   const isMonth = /\/\s*m(onth)?/i.test(str);
+
+//   if (!amount || (!isHour && !isMonth)) {
+//     // No unit detected yet — return unparsed so user keeps typing
+//     return { type: null, formatted: str, currency };
+//   }
+
+//   if (isHour) {
 //     return {
-//       type: "net",
-//       formatted: `Net - ${amount} ${currency}/Month (i.e, ${hourlyStr} ${currency}/Hour)`,
-//       monthly: amount,
-//       hourly,
+//       type:      "hour",
+//       formatted: `Gross - ${amount.toLocaleString()} ${currency}/Hour`,
+//       amount,
 //       currency,
 //     };
 //   }
-//   return { type: null, formatted: raw, hourly: null, currency };
+
+//   // isMonth
+//   return {
+//     type:      "month",
+//     formatted: `Gross - ${amount.toLocaleString()} ${currency}/Month`,
+//     amount,
+//     currency,
+//   };
 // }
 
 // // ─── Candidate Info builder ───────────────────────────────────────────────────
 // function buildCandidateInfo(name, isEU, rateType, workAuth) {
 //   const n = name || "[Candidate Name]";
+//   // "hour"  → own Limited company (gross hourly contractor)
+//   // "month" → Avance payroll (monthly employed via agency)
+//   // null    → default to Limited company
 //   const payrollBullet =
-//     rateType === "net"
-//       ? "He/She is willing to work under Avance payroll."
+//     rateType === "month"
+//       ? "Willing to work under Avance payroll."
 //       : "Has own Limited company to manage payroll.";
 //   const base = [
 //     `${n} is actively looking for new opportunities, as his recent project ended in Feb 2026.`,
@@ -611,25 +625,32 @@
 // }
 
 // // ─── Buy Rate Input ────────────────────────────────────────────────────────────
-// function BuyRateInput({ rawValue, formattedValue, rateType, hourlyCalc, onChange }) {
+// function BuyRateInput({ rawValue, formattedValue, rateType, onChange }) {
 //   const [focused, setFocused] = useState(false);
-//   const badgeColor = rateType === "gross" ? "#10b981" : rateType === "net" ? "#3b82f6" : "var(--text-dim)";
-//   const badgeLabel = rateType === "gross" ? "GROSS" : rateType === "net" ? "NET" : null;
+
+//   // Colour & badge by rate type
+//   const typeConfig = {
+//     hour:  { color: "#10b981", border: "rgba(16,185,129,0.4)", badge: "/HOUR",  badgeBg: "#10b981" },
+//     month: { color: "#3b82f6", border: "rgba(59,130,246,0.4)", badge: "/MONTH", badgeBg: "#3b82f6" },
+//   };
+//   const cfg = typeConfig[rateType] || null;
+
 //   return (
 //     <div>
+//       {/* Input field */}
 //       <div style={{ position: "relative" }}>
 //         <input
 //           value={focused ? rawValue : formattedValue || rawValue}
 //           onChange={(e) => onChange(e.target.value)}
 //           onFocus={() => setFocused(true)}
 //           onBlur={() => setFocused(false)}
-//           placeholder="e.g. gross 700 SEK or net 25000 SEK/Month"
+//           placeholder="e.g. 600 SEK/Hour  or  60000 SEK/Month  or  50 EUR/Hour"
 //           style={{
 //             width: "100%",
 //             background: "var(--bg)",
-//             border: `1px solid ${rateType === "gross" ? "rgba(16,185,129,0.4)" : rateType === "net" ? "rgba(59,130,246,0.4)" : "var(--border)"}`,
+//             border: `1px solid ${cfg ? cfg.border : "var(--border)"}`,
 //             borderRadius: "var(--radius)",
-//             padding: badgeLabel ? "9px 70px 9px 13px" : "9px 13px",
+//             padding: cfg ? "9px 80px 9px 13px" : "9px 13px",
 //             color: "var(--text)",
 //             fontFamily: "var(--font-body)",
 //             fontSize: 13.5,
@@ -637,32 +658,57 @@
 //             transition: "border-color .2s",
 //             boxSizing: "border-box",
 //           }}
+//           onFocus={(e) => { e.target.style.borderColor = cfg ? cfg.border : "var(--accent)"; }}
+//           onBlur={(e)  => { e.target.style.borderColor = cfg ? cfg.border : "var(--border)"; }}
 //         />
-//         {badgeLabel && (
-//           <span style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", background: badgeColor, color: "#fff", fontSize: 9.5, fontWeight: 800, padding: "2px 8px", borderRadius: 999, letterSpacing: "0.06em" }}>
-//             {badgeLabel}
+//         {cfg && (
+//           <span style={{
+//             position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)",
+//             background: cfg.badgeBg, color: "#fff", fontSize: 9.5, fontWeight: 800,
+//             padding: "2px 8px", borderRadius: 999, letterSpacing: "0.06em",
+//           }}>
+//             {cfg.badge}
 //           </span>
 //         )}
 //       </div>
+
+//       {/* What the email will show */}
 //       {formattedValue && !focused && (
-//         <div style={{ marginTop: 5, fontSize: 11.5, color: rateType === "gross" ? "var(--success)" : "var(--accent2)" }}>
+//         <div style={{ marginTop: 5, fontSize: 11.5, color: cfg ? cfg.color : "var(--text-muted)" }}>
 //           📧 Email will show: <strong>{formattedValue}</strong>
 //         </div>
 //       )}
-//       {rateType === "net" && hourlyCalc && !focused && (
-//         <div style={{ marginTop: 5, padding: "7px 11px", background: "rgba(59,130,246,0.07)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: 7, fontSize: 11.5, color: "var(--accent2)" }}>
-//           🔢 Calc: Monthly ÷ 19.5 ÷ 0.43 ÷ 8 = <strong>{hourlyCalc.toFixed(2)} /Hour</strong>
+
+//       {/* Payroll bullet hint */}
+//       {rateType === "hour" && !focused && formattedValue && (
+//         <div style={{
+//           marginTop: 6, padding: "7px 11px",
+//           background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.2)",
+//           borderRadius: 7, fontSize: 11.5, color: "var(--success)",
+//         }}>
+//           💼 Hourly rate → Candidate Info bullet: <strong>"Has own Limited company to manage payroll."</strong>
 //         </div>
 //       )}
-//       {rateType === "gross" && !focused && formattedValue && (
-//         <div style={{ marginTop: 5, fontSize: 11, color: "var(--text-dim)" }}>✓ Gross rate — "Has own Limited company" shown in Candidate Info</div>
+//       {rateType === "month" && !focused && formattedValue && (
+//         <div style={{
+//           marginTop: 6, padding: "7px 11px",
+//           background: "rgba(59,130,246,0.07)", border: "1px solid rgba(59,130,246,0.2)",
+//           borderRadius: 7, fontSize: 11.5, color: "var(--accent2)",
+//         }}>
+//           💰 Monthly rate → Candidate Info bullet: <strong>"Willing to work under Avance payroll."</strong>
+//         </div>
 //       )}
-//       {rateType === "net" && !focused && formattedValue && (
-//         <div style={{ marginTop: 5, fontSize: 11, color: "var(--text-dim)" }}>✓ Net rate — "Willing to work under Avance payroll" shown in Candidate Info</div>
-//       )}
+
+//       {/* Typing hint when empty */}
 //       {!rawValue && (
-//         <div style={{ marginTop: 5, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.6 }}>
-//           💡 Start with <strong style={{ color: "var(--text-muted)" }}>gross</strong> (hourly) or <strong style={{ color: "var(--text-muted)" }}>net</strong> (monthly) — hourly auto-calculated
+//         <div style={{ marginTop: 5, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.7 }}>
+//           💡 Type the amount + currency + unit, e.g.:<br />
+//           <span style={{ color: "var(--success)", fontWeight: 600 }}>600 SEK/Hour</span> or{" "}
+//           <span style={{ color: "var(--success)", fontWeight: 600 }}>50 EUR/Hour</span>
+//           {" "}→ own Limited company<br />
+//           <span style={{ color: "var(--accent2)", fontWeight: 600 }}>60000 SEK/Month</span> or{" "}
+//           <span style={{ color: "var(--accent2)", fontWeight: 600 }}>4000 EUR/Month</span>
+//           {" "}→ Avance payroll
 //         </div>
 //       )}
 //     </div>
@@ -1189,28 +1235,41 @@
 //             </div>
 //           </div>
 //           <div style={{ display: "flex", gap: 4, background: "var(--surface2)", padding: 3, borderRadius: 9, border: "1px solid var(--border)" }}>
-//             {["form", "preview"].map((v) => (
+//             {[
+//               { key: "form",         label: "📝 Email Form" },
+//               { key: "preview",      label: "👁 Preview" },
+//               { key: "skillmatrix",  label: "📊 Skill Matrix" },
+//             ].map(({ key, label }) => (
 //               <button
-//                 key={v}
-//                 onClick={() => setView(v)}
+//                 key={key}
+//                 onClick={() => setView(key)}
 //                 style={{
-//                   padding: "5px 18px", borderRadius: 7, border: "none", cursor: "pointer",
+//                   padding: "5px 16px", borderRadius: 7, border: "none", cursor: "pointer",
 //                   fontFamily: "var(--font-body)", fontWeight: 600, fontSize: 12.5,
-//                   background: view === v ? "var(--accent)" : "transparent",
-//                   color: view === v ? "#fff" : "var(--text-muted)",
+//                   background: view === key
+//                     ? key === "skillmatrix" ? "linear-gradient(135deg,#10b981,#059669)" : "var(--accent)"
+//                     : "transparent",
+//                   color: view === key ? "#fff" : "var(--text-muted)",
 //                   transition: "all .2s",
-//                   boxShadow: view === v ? "0 2px 8px rgba(59,130,246,0.3)" : "none",
+//                   boxShadow: view === key
+//                     ? key === "skillmatrix" ? "0 2px 8px rgba(16,185,129,0.35)" : "0 2px 8px rgba(59,130,246,0.3)"
+//                     : "none",
+//                   whiteSpace: "nowrap",
 //                 }}
 //               >
-//                 {v === "form" ? "📝 Form" : "👁 Preview"}
+//                 {label}
 //               </button>
 //             ))}
 //           </div>
 //           <div style={{ display: "flex", gap: 8 }}>
-//             <button onClick={reset} style={ghostBtn}>↺ Reset</button>
-//             <button onClick={handleCopy} style={copied ? successBtn : primaryBtn}>
-//               {copied ? "✓ Copied to Clipboard!" : "📋 Copy Email"}
-//             </button>
+//             {view !== "skillmatrix" && (
+//               <>
+//                 <button onClick={reset} style={ghostBtn}>↺ Reset</button>
+//                 <button onClick={handleCopy} style={copied ? successBtn : primaryBtn}>
+//                   {copied ? "✓ Copied to Clipboard!" : "📋 Copy Email"}
+//                 </button>
+//               </>
+//             )}
 //           </div>
 //         </div>
 //       </header>
@@ -1218,7 +1277,9 @@
 //       <BackendBanner status={backendStatus} />
 
 //       <main style={{ maxWidth: 1460, margin: "0 auto", padding: "22px 28px" }}>
-//         {view === "form" ? (
+//         {view === "skillmatrix" ? (
+//           <SkillMatrix />
+//         ) : view === "form" ? (
 //           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
 //             {/* LEFT */}
 //             <div>
@@ -1259,12 +1320,11 @@
 //                     <Inp value={form.billRate} disabled />
 //                   </Field>
 //                   <div style={{ marginBottom: 13 }}>
-//                     <Label hint="type gross or net + amount">Candidate Buy Rate</Label>
+//                     <Label hint="type amount + currency + /Hour or /Month">Candidate Buy Rate</Label>
 //                     <BuyRateInput
 //                       rawValue={form.buyRateRaw}
 //                       formattedValue={rateInfo.formatted}
 //                       rateType={rateInfo.type}
-//                       hourlyCalc={rateInfo.hourly}
 //                       onChange={handleBuyRateChange}
 //                     />
 //                   </div>
@@ -1416,14 +1476,14 @@
 
 //               <Card title="Candidate Information Bullets" icon="ℹ️" delay={100}>
 //                 <div style={{ marginBottom: 10 }}>
-//                   {rateInfo.type === "gross" && (
+//                   {rateInfo.type === "hour" && (
 //                     <div style={{ padding: "6px 11px", background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 7, fontSize: 12, color: "var(--success)", marginBottom: 7 }}>
-//                       💼 Gross rate — last bullet: "Has own Limited company to manage payroll."
+//                       💼 Hourly rate → last bullet: <strong>"Has own Limited company to manage payroll."</strong>
 //                     </div>
 //                   )}
-//                   {rateInfo.type === "net" && (
+//                   {rateInfo.type === "month" && (
 //                     <div style={{ padding: "6px 11px", background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: 7, fontSize: 12, color: "var(--accent2)", marginBottom: 7 }}>
-//                       💰 Net rate — last bullet: "He/She is willing to work under Avance payroll."
+//                       💰 Monthly rate → last bullet: <strong>"Willing to work under Avance payroll."</strong>
 //                     </div>
 //                   )}
 //                   {form.nationality && isEUNationality(form.nationality) === true && (
@@ -1479,7 +1539,6 @@
 // const primaryBtn = { ..._b, background: "linear-gradient(135deg,#3b82f6,#6366f1)", color: "#fff", boxShadow: "0 2px 12px rgba(99,102,241,0.3)" };
 // const successBtn = { ..._b, background: "var(--success)", color: "#fff" };
 // const ghostBtn   = { ..._b, background: "var(--surface2)", color: "var(--text-muted)", border: "1px solid var(--border)" };
-
 
 
 
@@ -1592,62 +1651,82 @@ function resolveNationality(input) {
 }
 
 // ─── Rate helpers ─────────────────────────────────────────────────────────────
-function calcHourlyFromMonthly(monthly) {
-  if (!monthly || isNaN(monthly) || monthly <= 0) return null;
-  return monthly / 19.5 / 0.43 / 8;
-}
-
+// ─── Rate helpers ─────────────────────────────────────────────────────────────
+// Rules:
+//   600 SEK/Hour  | 50 EUR/Hour   → type "hour"  → "Has own Limited company to manage payroll."
+//   60000 SEK/Month | 4000 EUR/Month → type "month" → "Willing to work under Avance payroll."
+// Detection: look for /Hour or /Month (case-insensitive) after a number+currency.
 function parseBuyRateInput(raw) {
-  if (!raw?.trim()) return { type: null, formatted: "", hourly: null, currency: "SEK" };
-  const lower = raw.trim().toLowerCase();
-  let type = null;
-  if (/\b(gross|gros)\b/.test(lower)) type = "gross";
-  else if (/\b(net|nett|netto)\b/.test(lower)) type = "net";
-  if (!type) return { type: null, formatted: raw, hourly: null, currency: "SEK" };
-  const numMatch = raw.match(/[\d,\s]+\.?\d*/g);
-  const nums = (numMatch || [])
-    .map((n) => parseFloat(n.replace(/[\s,]/g, "")))
-    .filter((n) => !isNaN(n) && n > 0);
-  const amount = nums[0];
-  const currency = /eur/i.test(raw) ? "EUR" : "SEK";
-  if (!amount) return { type, formatted: raw, hourly: null, currency };
-  if (type === "gross")
-    return { type: "gross", formatted: `Gross - ${amount} ${currency}/Hour`, hourly: amount, currency };
-  if (type === "net") {
-    const hourly = calcHourlyFromMonthly(amount);
-    const hourlyStr = hourly ? hourly.toFixed(2) : "?";
+  if (!raw?.trim()) return { type: null, formatted: "", currency: "SEK" };
+
+  const str   = raw.trim();
+  const lower = str.toLowerCase();
+
+  // Extract the numeric amount (first number found)
+  const numMatch = str.match(/[\d]+(?:[,.\s]\d+)*/);
+  const amount   = numMatch ? parseFloat(numMatch[0].replace(/[,\s]/g, "")) : null;
+
+  // Currency: EUR if "eur" appears, else SEK
+  const currency = /eur/i.test(str) ? "EUR" : "SEK";
+
+  // Detect unit: /hour or /month (with optional space before slash)
+  const isHour  = /\/\s*h(our)?/i.test(str);
+  const isMonth = /\/\s*m(onth)?/i.test(str);
+
+  if (!amount || (!isHour && !isMonth)) {
+    // No unit detected yet — return unparsed so user keeps typing
+    return { type: null, formatted: str, currency };
+  }
+
+  if (isHour) {
     return {
-      type: "net",
-      formatted: `Net - ${amount} ${currency}/Month (i.e, ${hourlyStr} ${currency}/Hour)`,
-      monthly: amount,
-      hourly,
+      type:      "hour",
+      formatted: `Gross - ${amount.toLocaleString()} ${currency}/Hour`,
+      amount,
       currency,
     };
   }
-  return { type: null, formatted: raw, hourly: null, currency };
+
+  // isMonth
+  return {
+    type:      "month",
+    formatted: `Gross - ${amount.toLocaleString()} ${currency}/Month`,
+    amount,
+    currency,
+  };
 }
 
 // ─── Candidate Info builder ───────────────────────────────────────────────────
-function buildCandidateInfo(name, isEU, rateType, workAuth) {
+function buildCandidateInfo(name, isEU, rateType, workAuth, gender = "he") {
   const n = name || "[Candidate Name]";
+  // Derive pronouns from gender ("he" | "she" | other → "they")
+  const g = (gender || "he").toLowerCase().trim();
+  const his   = g === "she" ? "her"    : g === "he" ? "his"    : "their";
+  const wife  = g === "she" ? "husband" : "wife";
+
   const payrollBullet =
-    rateType === "net"
-      ? "He/She is willing to work under Avance payroll."
+    rateType === "month"
+      ? "Willing to work under Avance payroll."
       : "Has own Limited company to manage payroll.";
   const base = [
-    `${n} is actively looking for new opportunities, as his recent project ended in Feb 2026.`,
+    `${n} is actively looking for new opportunities, as ${his} recent project ended in Feb 2026.`,
     `Has no interviews/offers in the pipeline.`,
-    `No planned vacations & his communication skills are good.`,
+    `No planned vacations & ${his} communication skills are good.`,
   ];
   if (isEU === false && workAuth) {
-    base.push(`${workAuth} and his wife is working for Prodware as permanent employee on a sponsored visa.`);
+    base.push(`${workAuth} and ${his} ${wife} is working for Prodware as permanent employee on a sponsored visa.`);
   }
   base.push(payrollBullet);
   return base.join("\n");
 }
 
-const todayFormatted = () =>
-  new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+const todayFormatted = () => {
+  const d = new Date();
+  const dd  = String(d.getDate()).padStart(2, "0");
+  const mm  = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}-${mm}-${yyyy}`;
+};
 
 // ─── PII helpers ──────────────────────────────────────────────────────────────
 function stripPII(text) {
@@ -1731,7 +1810,7 @@ async function parseDOCX(file) {
 
 const FIXED_INTERVIEW =
   "Candidate is available for interviews anytime during the week days with prior notice.";
-const FIXED_JOIN_PREFIX = "He can take up this project";
+const JOIN_MIDDLE = " can take up this project ";  // the fixed middle part
 
 const EMPTY_FORM = {
   hiName: "Mahesh",
@@ -1756,7 +1835,7 @@ const EMPTY_FORM = {
   sizzlingLine2: "",
   sizzlingLine3: "",
   sizzlingExtra: `Fluent in English and Swedish both written and oral.\nAvailable immediately (Project ended).\nLives in Stockholm, Sweden and is flexible to be onsite 3 days a week.`,
-  candidateInfo: buildCandidateInfo("", null, null, ""),
+  candidateInfo: buildCandidateInfo("", null, null, "", "he"),
   fullName: "",
   presentLocation: "",
   emailId: "",
@@ -1764,9 +1843,10 @@ const EMPTY_FORM = {
   nationality: "",
   workAuthorization: "",
   eligibility: "",
-  cvSource: "",
+  cvSource: "LinkedIn",
   dob: "",
   joinNoteSuffix: "immediately.",
+  joinPrefix: "He",
 };
 
 // ─── HTML email builder ───────────────────────────────────────────────────────
@@ -1822,7 +1902,7 @@ function buildHtmlEmail(f) {
     .filter(Boolean)
     .join("");
   const interviewLine =
-    `Interview: ${FIXED_INTERVIEW} ${FIXED_JOIN_PREFIX} ${f.joinNoteSuffix || "immediately."}`.trim();
+    `Interview: ${FIXED_INTERVIEW} ${f.joinPrefix || "He"}${JOIN_MIDDLE}${f.joinNoteSuffix || "immediately."}`.trim();
   return `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.7;color:#1e293b;max-width:720px">
   <p style="font-family:Arial,sans-serif;font-size:14px;margin:0 0 8px">Hi <strong>${f.hiName}</strong>,</p>
   <p style="font-family:Arial,sans-serif;font-size:14px;margin:0 0 16px">Please find the attached resume of <strong>${f.candidateName}</strong> for <strong>${f.role}</strong> role at <strong>${f.location}</strong>.</p>
@@ -2096,25 +2176,32 @@ function Alert({ type, children }) {
 }
 
 // ─── Buy Rate Input ────────────────────────────────────────────────────────────
-function BuyRateInput({ rawValue, formattedValue, rateType, hourlyCalc, onChange }) {
+function BuyRateInput({ rawValue, formattedValue, rateType, onChange }) {
   const [focused, setFocused] = useState(false);
-  const badgeColor = rateType === "gross" ? "#10b981" : rateType === "net" ? "#3b82f6" : "var(--text-dim)";
-  const badgeLabel = rateType === "gross" ? "GROSS" : rateType === "net" ? "NET" : null;
+
+  // Colour & badge by rate type
+  const typeConfig = {
+    hour:  { color: "#10b981", border: "rgba(16,185,129,0.4)", badge: "/HOUR",  badgeBg: "#10b981" },
+    month: { color: "#3b82f6", border: "rgba(59,130,246,0.4)", badge: "/MONTH", badgeBg: "#3b82f6" },
+  };
+  const cfg = typeConfig[rateType] || null;
+
   return (
     <div>
+      {/* Input field */}
       <div style={{ position: "relative" }}>
         <input
           value={focused ? rawValue : formattedValue || rawValue}
           onChange={(e) => onChange(e.target.value)}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          placeholder="e.g. gross 700 SEK or net 25000 SEK/Month"
+          placeholder="e.g. 600 SEK/Hour  or  60000 SEK/Month  or  50 EUR/Hour"
           style={{
             width: "100%",
             background: "var(--bg)",
-            border: `1px solid ${rateType === "gross" ? "rgba(16,185,129,0.4)" : rateType === "net" ? "rgba(59,130,246,0.4)" : "var(--border)"}`,
+            border: `1px solid ${cfg ? cfg.border : "var(--border)"}`,
             borderRadius: "var(--radius)",
-            padding: badgeLabel ? "9px 70px 9px 13px" : "9px 13px",
+            padding: cfg ? "9px 80px 9px 13px" : "9px 13px",
             color: "var(--text)",
             fontFamily: "var(--font-body)",
             fontSize: 13.5,
@@ -2122,32 +2209,57 @@ function BuyRateInput({ rawValue, formattedValue, rateType, hourlyCalc, onChange
             transition: "border-color .2s",
             boxSizing: "border-box",
           }}
+          onFocus={(e) => { e.target.style.borderColor = cfg ? cfg.border : "var(--accent)"; }}
+          onBlur={(e)  => { e.target.style.borderColor = cfg ? cfg.border : "var(--border)"; }}
         />
-        {badgeLabel && (
-          <span style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", background: badgeColor, color: "#fff", fontSize: 9.5, fontWeight: 800, padding: "2px 8px", borderRadius: 999, letterSpacing: "0.06em" }}>
-            {badgeLabel}
+        {cfg && (
+          <span style={{
+            position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)",
+            background: cfg.badgeBg, color: "#fff", fontSize: 9.5, fontWeight: 800,
+            padding: "2px 8px", borderRadius: 999, letterSpacing: "0.06em",
+          }}>
+            {cfg.badge}
           </span>
         )}
       </div>
+
+      {/* What the email will show */}
       {formattedValue && !focused && (
-        <div style={{ marginTop: 5, fontSize: 11.5, color: rateType === "gross" ? "var(--success)" : "var(--accent2)" }}>
+        <div style={{ marginTop: 5, fontSize: 11.5, color: cfg ? cfg.color : "var(--text-muted)" }}>
           📧 Email will show: <strong>{formattedValue}</strong>
         </div>
       )}
-      {rateType === "net" && hourlyCalc && !focused && (
-        <div style={{ marginTop: 5, padding: "7px 11px", background: "rgba(59,130,246,0.07)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: 7, fontSize: 11.5, color: "var(--accent2)" }}>
-          🔢 Calc: Monthly ÷ 19.5 ÷ 0.43 ÷ 8 = <strong>{hourlyCalc.toFixed(2)} /Hour</strong>
+
+      {/* Payroll bullet hint */}
+      {rateType === "hour" && !focused && formattedValue && (
+        <div style={{
+          marginTop: 6, padding: "7px 11px",
+          background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.2)",
+          borderRadius: 7, fontSize: 11.5, color: "var(--success)",
+        }}>
+          💼 Hourly rate → Candidate Info bullet: <strong>"Has own Limited company to manage payroll."</strong>
         </div>
       )}
-      {rateType === "gross" && !focused && formattedValue && (
-        <div style={{ marginTop: 5, fontSize: 11, color: "var(--text-dim)" }}>✓ Gross rate — "Has own Limited company" shown in Candidate Info</div>
+      {rateType === "month" && !focused && formattedValue && (
+        <div style={{
+          marginTop: 6, padding: "7px 11px",
+          background: "rgba(59,130,246,0.07)", border: "1px solid rgba(59,130,246,0.2)",
+          borderRadius: 7, fontSize: 11.5, color: "var(--accent2)",
+        }}>
+          💰 Monthly rate → Candidate Info bullet: <strong>"Willing to work under Avance payroll."</strong>
+        </div>
       )}
-      {rateType === "net" && !focused && formattedValue && (
-        <div style={{ marginTop: 5, fontSize: 11, color: "var(--text-dim)" }}>✓ Net rate — "Willing to work under Avance payroll" shown in Candidate Info</div>
-      )}
+
+      {/* Typing hint when empty */}
       {!rawValue && (
-        <div style={{ marginTop: 5, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.6 }}>
-          💡 Start with <strong style={{ color: "var(--text-muted)" }}>gross</strong> (hourly) or <strong style={{ color: "var(--text-muted)" }}>net</strong> (monthly) — hourly auto-calculated
+        <div style={{ marginTop: 5, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.7 }}>
+          💡 Type the amount + currency + unit, e.g.:<br />
+          <span style={{ color: "var(--success)", fontWeight: 600 }}>600 SEK/Hour</span> or{" "}
+          <span style={{ color: "var(--success)", fontWeight: 600 }}>50 EUR/Hour</span>
+          {" "}→ own Limited company<br />
+          <span style={{ color: "var(--accent2)", fontWeight: 600 }}>60000 SEK/Month</span> or{" "}
+          <span style={{ color: "var(--accent2)", fontWeight: 600 }}>4000 EUR/Month</span>
+          {" "}→ Avance payroll
         </div>
       )}
     </div>
@@ -2238,8 +2350,11 @@ function NationalityInput({ value, onChange, onResolved }) {
   );
 }
 
-function WorkAuthField({ value, onChange, show }) {
+function WorkAuthField({ value, onChange, show, gender }) {
   if (!show) return null;
+  const g = (gender || "he").toLowerCase().trim();
+  const his  = g === "she" ? "her"     : "his";
+  const wife = g === "she" ? "husband" : "wife";
   return (
     <div style={{ animation: "slideDown 0.3s ease", gridColumn: "1 / -1" }}>
       <div style={{ background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.35)", borderRadius: 10, padding: "12px 14px" }}>
@@ -2261,7 +2376,7 @@ function WorkAuthField({ value, onChange, show }) {
         />
         {value && (
           <p style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 5 }}>
-            📝 Bullet: "<em>{value} and his wife is working for Prodware as permanent employee on a sponsored visa.</em>"
+            📝 Bullet: "<em>{value} and {his} {wife} is working for Prodware as permanent employee on a sponsored visa.</em>"
           </p>
         )}
       </div>
@@ -2269,29 +2384,208 @@ function WorkAuthField({ value, onChange, show }) {
   );
 }
 
-function JoinNoteField({ value, onChange }) {
+function JoinNoteField({ prefix, onPrefixChange, suffix, onSuffixChange }) {
   return (
     <div>
-      <Label hint="only the suffix is editable">Joining Note</Label>
-      <div style={{ display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden", background: "var(--bg)" }}>
-        <span style={{ padding: "9px 10px 9px 13px", background: "var(--surface2)", color: "var(--text-muted)", fontSize: 13.5, fontFamily: "var(--font-body)", whiteSpace: "nowrap", borderRight: "1px solid var(--border)", flexShrink: 0 }}>
-          {FIXED_JOIN_PREFIX}
-        </span>
+      <Label hint="He / She — editable">Joining Note</Label>
+      <div style={{
+        display: "flex", alignItems: "center",
+        border: "1px solid var(--border)", borderRadius: "var(--radius)",
+        overflow: "hidden", background: "var(--bg)",
+      }}>
+        {/* Editable He/She */}
         <input
-          value={value}
-          onChange={onChange}
+          value={prefix}
+          onChange={onPrefixChange}
+          placeholder="He"
+          title="Type He or She"
+          style={{
+            width: 46, background: "var(--surface2)", border: "none",
+            borderRight: "1px solid var(--border)", outline: "none",
+            padding: "9px 8px", color: "var(--accent2)",
+            fontFamily: "var(--font-body)", fontSize: 13.5, fontWeight: 700,
+            textAlign: "center", flexShrink: 0,
+          }}
+        />
+        {/* Fixed middle */}
+        <span style={{
+          padding: "9px 8px", background: "var(--surface2)", color: "var(--text-muted)",
+          fontSize: 13.5, fontFamily: "var(--font-body)", whiteSpace: "nowrap",
+          borderRight: "1px solid var(--border)", flexShrink: 0,
+        }}>
+          can take up this project
+        </span>
+        {/* Editable suffix */}
+        <input
+          value={suffix}
+          onChange={onSuffixChange}
           placeholder="immediately."
-          style={{ flex: 1, background: "transparent", border: "none", outline: "none", padding: "9px 13px", color: "var(--text)", fontFamily: "var(--font-body)", fontSize: 13.5 }}
+          style={{
+            flex: 1, background: "transparent", border: "none", outline: "none",
+            padding: "9px 13px", color: "var(--text)",
+            fontFamily: "var(--font-body)", fontSize: 13.5,
+          }}
         />
       </div>
       <p style={{ fontSize: 10.5, color: "var(--text-dim)", marginTop: 4 }}>
-        Preview: <em style={{ color: "var(--text-muted)" }}>Interview: {FIXED_INTERVIEW} {FIXED_JOIN_PREFIX} {value || "immediately."}</em>
+        Preview:{" "}
+        <em style={{ color: "var(--text-muted)" }}>
+          Interview: {FIXED_INTERVIEW} {prefix || "He"}{JOIN_MIDDLE}{suffix || "immediately."}
+        </em>
       </p>
     </div>
   );
 }
 
-// ─── CV Uploader ──────────────────────────────────────────────────────────────
+// ─── CV Source shortcuts map ──────────────────────────────────────────────────
+const CV_SOURCE_MAP = {
+  l: "LinkedIn",
+  li: "LinkedIn",
+  lin: "LinkedIn",
+  link: "LinkedIn",
+  linked: "LinkedIn",
+  linkedin: "LinkedIn",
+  w: "Wisestep",
+  wi: "Wisestep",
+  wis: "Wisestep",
+  wise: "Wisestep",
+  wisest: "Wisestep",
+  wisestep: "Wisestep",
+  n: "Naukri",
+  na: "Naukri",
+  nau: "Naukri",
+  nauk: "Naukri",
+  naukri: "Naukri",
+  i: "Indeed",
+  in: "Indeed",
+  ind: "Indeed",
+  inde: "Indeed",
+  indee: "Indeed",
+  indeed: "Indeed",
+  m: "Monster",
+  mo: "Monster",
+  mon: "Monster",
+  mons: "Monster",
+  monst: "Monster",
+  monster: "Monster",
+  r: "Referral",
+  re: "Referral",
+  ref: "Referral",
+  refe: "Referral",
+  refer: "Referral",
+  referr: "Referral",
+  referral: "Referral",
+  g: "GitHub",
+  gi: "GitHub",
+  git: "GitHub",
+  gith: "GitHub",
+  github: "GitHub",
+  x: "Xing",
+  xi: "Xing",
+  xin: "Xing",
+  xing: "Xing",
+};
+
+const CV_SOURCE_SUGGESTIONS = [
+  "LinkedIn", "Wisestep", "Indeed", "Naukri", "Monster",
+  "Referral", "GitHub", "Xing", "JobTeaser", "StepStone",
+];
+
+function CVSourceInput({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
+  const ref = useRef();
+
+  const handleChange = (e) => {
+    const raw = e.target.value;
+    // Check shortcut map
+    const resolved = CV_SOURCE_MAP[raw.trim().toLowerCase()];
+    if (resolved) {
+      onChange({ target: { value: resolved } });
+    } else {
+      onChange(e);
+    }
+    // Show dropdown suggestions
+    const lower = raw.toLowerCase();
+    const matches = CV_SOURCE_SUGGESTIONS.filter(s => s.toLowerCase().startsWith(lower));
+    setOpen(matches.length > 0 && raw.length > 0);
+    setHighlighted(0);
+  };
+
+  const suggestions = CV_SOURCE_SUGGESTIONS.filter(s =>
+    s.toLowerCase().startsWith(value.toLowerCase())
+  );
+
+  const select = (s) => {
+    onChange({ target: { value: s } });
+    setOpen(false);
+  };
+
+  const handleKey = (e) => {
+    if (!open) return;
+    if (e.key === "ArrowDown") { setHighlighted(h => Math.min(h + 1, suggestions.length - 1)); e.preventDefault(); }
+    if (e.key === "ArrowUp")   { setHighlighted(h => Math.max(h - 1, 0)); e.preventDefault(); }
+    if (e.key === "Enter")     { select(suggestions[highlighted]); e.preventDefault(); }
+    if (e.key === "Escape")    setOpen(false);
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <input
+        ref={ref}
+        value={value}
+        onChange={handleChange}
+        onKeyDown={handleKey}
+        onFocus={(e) => {
+          e.target.style.borderColor = "var(--accent)";
+          if (value && suggestions.length > 0) setOpen(true);
+        }}
+        onBlur={(e) => {
+          e.target.style.borderColor = "var(--border)";
+          setTimeout(() => setOpen(false), 150);
+        }}
+        placeholder="LinkedIn"
+        autoComplete="off"
+        style={{
+          width: "100%", background: "var(--bg)", border: "1px solid var(--border)",
+          borderRadius: "var(--radius)", padding: "9px 13px", color: "var(--text)",
+          fontFamily: "var(--font-body)", fontSize: 13.5, outline: "none",
+          transition: "border-color .2s", boxSizing: "border-box",
+        }}
+      />
+      {open && suggestions.length > 0 && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999,
+          background: "var(--surface)", border: "1px solid var(--accent)",
+          borderRadius: 8, marginTop: 3, overflow: "hidden",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.4)", animation: "fadeIn 0.15s ease",
+        }}>
+          {suggestions.map((s, i) => (
+            <div
+              key={s}
+              onMouseDown={() => select(s)}
+              onMouseEnter={() => setHighlighted(i)}
+              style={{
+                padding: "9px 13px", cursor: "pointer", fontSize: 13.5,
+                background: i === highlighted ? "var(--accent-glow)" : "transparent",
+                color: "var(--text)",
+                borderBottom: i < suggestions.length - 1 ? "1px solid var(--border)" : "none",
+                transition: "background .1s",
+              }}
+            >
+              {s}
+            </div>
+          ))}
+        </div>
+      )}
+      {value && (
+        <div style={{ marginTop: 4, fontSize: 10.5, color: "var(--text-dim)" }}>
+          💡 Type first letter to shortcut: W→Wisestep, I→Indeed, N→Naukri, R→Referral…
+        </div>
+      )}
+    </div>
+  );
+}
 function CVUploader({ onExtracted, onTextReady }) {
   const [status, setStatus] = useState("idle");
   const [fileName, setFileName] = useState("");
@@ -2505,8 +2799,8 @@ export default function App() {
     const v = e.target.value;
     setForm((f) => ({ ...f, requisitionName: v, role: v }));
   };
-  const rebuild = (name, nat, rateType, workAuth) =>
-    buildCandidateInfo(name, isEUNationality(nat), rateType, workAuth);
+  const rebuild = (name, nat, rateType, workAuth, prefix) =>
+    buildCandidateInfo(name, isEUNationality(nat), rateType, workAuth, prefix || form.joinPrefix || "he");
   const setCandName = (e) => {
     const name = e.target.value;
     setForm((f) => ({
@@ -2547,6 +2841,24 @@ export default function App() {
       buyRateRaw: raw,
       buyRate: info.formatted || raw,
       candidateInfo: candInfoManual ? f.candidateInfo : rebuild(f.candidateName, f.nationality, info.type, f.workAuthorization),
+    }));
+  };
+
+  // ── Join prefix (He/She) change — rebuilds candidateInfo pronouns live ──────
+  const handleJoinPrefixChange = (e) => {
+    const prefix = e.target.value;
+    setForm((f) => ({
+      ...f,
+      joinPrefix: prefix,
+      candidateInfo: candInfoManual
+        ? f.candidateInfo
+        : buildCandidateInfo(
+            f.candidateName,
+            isEUNationality(f.nationality),
+            parseBuyRateInput(f.buyRateRaw).type,
+            f.workAuthorization,
+            prefix,
+          ),
     }));
   };
   const setCandInfo = (e) => {
@@ -2759,12 +3071,11 @@ export default function App() {
                     <Inp value={form.billRate} disabled />
                   </Field>
                   <div style={{ marginBottom: 13 }}>
-                    <Label hint="type gross or net + amount">Candidate Buy Rate</Label>
+                    <Label hint="type amount + currency + /Hour or /Month">Candidate Buy Rate</Label>
                     <BuyRateInput
                       rawValue={form.buyRateRaw}
                       formattedValue={rateInfo.formatted}
                       rateType={rateInfo.type}
-                      hourlyCalc={rateInfo.hourly}
                       onChange={handleBuyRateChange}
                     />
                   </div>
@@ -2808,19 +3119,24 @@ export default function App() {
                       </div>
                     )}
                   </Field>
-                  <Field label="CV Source" hint="auto-filled">
-                    <Inp value={form.cvSource} onChange={set("cvSource")} placeholder="LinkedIn" />
+                  <Field label="CV Source" hint="auto-filled · type W for Wisestep, I for Indeed…">
+                    <CVSourceInput value={form.cvSource} onChange={(e) => setForm(f => ({ ...f, cvSource: e.target.value }))} />
                   </Field>
                   <Field label="Date of Birth" hint="🔒 local only">
                     <Inp value={form.dob} onChange={set("dob")} placeholder="16th Sep 2002" />
                   </Field>
-                  <WorkAuthField value={form.workAuthorization} onChange={handleWorkAuthChange} show={needsWorkAuth} />
+                  <WorkAuthField value={form.workAuthorization} onChange={handleWorkAuthChange} show={needsWorkAuth} gender={form.joinPrefix} />
                 </G2>
                 <div style={{ marginTop: 6 }}>
                   <Field label="Interview Note" lock>
                     <Inp value={FIXED_INTERVIEW} disabled />
                   </Field>
-                  <JoinNoteField value={form.joinNoteSuffix} onChange={set("joinNoteSuffix")} />
+                  <JoinNoteField
+                    prefix={form.joinPrefix}
+                    onPrefixChange={handleJoinPrefixChange}
+                    suffix={form.joinNoteSuffix}
+                    onSuffixChange={set("joinNoteSuffix")}
+                  />
                 </div>
               </Card>
             </div>
@@ -2916,14 +3232,32 @@ export default function App() {
 
               <Card title="Candidate Information Bullets" icon="ℹ️" delay={100}>
                 <div style={{ marginBottom: 10 }}>
-                  {rateInfo.type === "gross" && (
+                  {/* Gender pronoun indicator */}
+                  {(() => {
+                    const g = (form.joinPrefix || "he").toLowerCase().trim();
+                    const isShe = g === "she";
+                    const isHe  = g === "he";
+                    if (!isHe && !isShe) return null;
+                    return (
+                      <div style={{ padding: "6px 11px", background: isShe ? "rgba(236,72,153,0.08)" : "rgba(59,130,246,0.08)", border: `1px solid ${isShe ? "rgba(236,72,153,0.25)" : "rgba(59,130,246,0.2)"}`, borderRadius: 7, fontSize: 12, color: isShe ? "#f472b6" : "var(--accent2)", marginBottom: 7, display: "flex", alignItems: "center", gap: 6 }}>
+                        <span>{isShe ? "👩" : "👨"}</span>
+                        <span>
+                          {isShe
+                            ? <>Female — pronouns: <strong>her</strong> · spouse bullet: <strong>husband</strong></>
+                            : <>Male — pronouns: <strong>his</strong> · spouse bullet: <strong>wife</strong></>
+                          }
+                        </span>
+                      </div>
+                    );
+                  })()}
+                  {rateInfo.type === "hour" && (
                     <div style={{ padding: "6px 11px", background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 7, fontSize: 12, color: "var(--success)", marginBottom: 7 }}>
-                      💼 Gross rate — last bullet: "Has own Limited company to manage payroll."
+                      💼 Hourly rate → last bullet: <strong>"Has own Limited company to manage payroll."</strong>
                     </div>
                   )}
-                  {rateInfo.type === "net" && (
+                  {rateInfo.type === "month" && (
                     <div style={{ padding: "6px 11px", background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: 7, fontSize: 12, color: "var(--accent2)", marginBottom: 7 }}>
-                      💰 Net rate — last bullet: "He/She is willing to work under Avance payroll."
+                      💰 Monthly rate → last bullet: <strong>"Willing to work under Avance payroll."</strong>
                     </div>
                   )}
                   {form.nationality && isEUNationality(form.nationality) === true && (
@@ -2947,7 +3281,7 @@ export default function App() {
                     </div>
                   )}
                 </div>
-                <TA value={form.candidateInfo} onChange={setCandInfo} rows={7} placeholder={buildCandidateInfo("Candidate Name", null, null, "")} />
+                <TA value={form.candidateInfo} onChange={setCandInfo} rows={7} placeholder={buildCandidateInfo("Candidate Name", null, null, "", form.joinPrefix || "he")} />
               </Card>
             </div>
           </div>
